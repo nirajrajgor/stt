@@ -3,6 +3,7 @@
 
 import datetime
 import os
+import re
 import tempfile
 import threading
 import time
@@ -27,6 +28,14 @@ NSUserNotificationCenter = objc.lookUpClass("NSUserNotificationCenter")
 SAMPLE_RATE = 16000
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TRANSCRIPTIONS_FILE = os.path.join(SCRIPT_DIR, "transcriptions.md")
+
+# Common transcription corrections (case-insensitive find → replace)
+CORRECTIONS = {
+    "npxcc usage": "npx ccusage",
+    "paragate": "parakeet",
+    "para kit": "parakeet",
+    "para kate": "parakeet",
+}
 
 recording = False
 audio_frames = []
@@ -62,9 +71,15 @@ parakeet_model = from_pretrained("mlx-community/parakeet-tdt-0.6b-v2")
 print("Model loaded.")
 
 
+def apply_corrections(text):
+    for wrong, right in CORRECTIONS.items():
+        text = re.sub(re.escape(wrong), right, text, flags=re.IGNORECASE)
+    return text
+
+
 def transcribe(audio_file):
     result = parakeet_model.transcribe(audio_file)
-    return result.text.strip()
+    return apply_corrections(result.text.strip())
 
 
 def save_to_markdown(text):
