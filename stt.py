@@ -147,7 +147,7 @@ def stop_recording():
         controller.release('v')
         controller.release(keyboard.Key.cmd)
         save_to_markdown(text)
-        notify("STT", f"Pasted: {text[:80]}")
+        notify("STT", "Pasted to clipboard.")
         print(f"✅ Pasted to focused input:\n{text}")
     else:
         notify("STT", "No speech detected.")
