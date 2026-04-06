@@ -99,6 +99,31 @@ def save_to_markdown(text):
         f.write(entry)
 
 
+def resolve_input_device():
+    """Pick the input device to record from.
+
+    Priority:
+      1. STT_INPUT_DEVICE env var — either an integer index or a case-insensitive
+         substring match against a device name (e.g. "webcam", "macbook").
+      2. The current system default input device.
+    """
+    override = os.environ.get("STT_INPUT_DEVICE")
+    if override:
+        try:
+            return int(override)
+        except ValueError:
+            needle = override.lower()
+            for idx, dev in enumerate(sd.query_devices()):
+                if dev["max_input_channels"] > 0 and needle in dev["name"].lower():
+                    return idx
+            print(
+                f"⚠️  STT_INPUT_DEVICE='{override}' not found; "
+                "falling back to system default."
+            )
+    # None tells sounddevice to use the current system default input.
+    return None
+
+
 def start_recording():
     global recording, audio_frames, stream
 
@@ -109,7 +134,13 @@ def start_recording():
         if recording:
             audio_frames.append(indata.copy())
 
-    stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=1, callback=callback)
+    device = resolve_input_device()
+    dev_info = sd.query_devices(device, "input")
+    print(f"🎙️  Using input device: {dev_info['name']}")
+
+    stream = sd.InputStream(
+        samplerate=SAMPLE_RATE, channels=1, callback=callback, device=device
+    )
     stream.start()
     notify("STT", "Recording started...")
     print("🎙️  Recording...")
