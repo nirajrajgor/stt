@@ -47,6 +47,10 @@ pressed_keys = set()
 def notify(title, message):
     """Show a macOS notification."""
     center = NSUserNotificationCenter.defaultUserNotificationCenter()
+    if center is None:
+        # NSUserNotificationCenter is unavailable (e.g. not running from a
+        # bundled .app, or deprecated on this macOS/Python build). Skip.
+        return
     # Remove previous notifications so they don't pile up
     center.removeAllDeliveredNotifications()
     n = NSUserNotification.alloc().init()
