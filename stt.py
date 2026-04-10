@@ -11,6 +11,7 @@ import time
 import Foundation
 import objc
 
+import mlx.core as mx
 import numpy as np
 import pyperclip
 import sounddevice as sd
@@ -35,6 +36,8 @@ CORRECTIONS = {
     "paragate": "parakeet",
     "para kit": "parakeet",
     "para kate": "parakeet",
+    "Shard CN": "shadcn",
+    "superbase": "supabase"
 }
 
 recording = False
@@ -72,6 +75,9 @@ def notify(title, message):
 # --- Parakeet MLX ---
 print("Loading Parakeet TDT 0.6B v2 model...")
 parakeet_model = from_pretrained("mlx-community/parakeet-tdt-0.6b-v2")
+# Cap MLX's buffer cache so it reclaims instead of growing unboundedly with
+# the longest transcription. 512 MB is plenty for intermediate tensors.
+mx.set_cache_limit(512 * 1024 * 1024)
 print("Model loaded.")
 
 
@@ -82,8 +88,14 @@ def apply_corrections(text):
 
 
 def transcribe(audio_file):
-    result = parakeet_model.transcribe(audio_file)
-    return apply_corrections(result.text.strip())
+    try:
+        result = parakeet_model.transcribe(audio_file)
+        return apply_corrections(result.text.strip())
+    finally:
+        # parakeet_mlx's non-streaming transcribe() never clears MLX's buffer
+        # cache, so cached intermediates from the largest-ever audio clip pin
+        # GB of memory until process exit. Drop them between calls.
+        mx.clear_cache()
 
 
 def save_to_markdown(text):
@@ -148,7 +160,7 @@ def start_recording():
 
 
 def stop_recording():
-    global recording, stream
+    global recording, stream, audio_frames
 
     recording = False
     if stream:
@@ -165,6 +177,9 @@ def stop_recording():
     print("⏳ Transcribing...")
 
     audio_data = np.concatenate(audio_frames, axis=0)
+    # Drop raw chunks now that they're consolidated; the global was keeping
+    # them alive until the next recording started.
+    audio_frames = []
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         sf.write(f.name, audio_data, SAMPLE_RATE)
