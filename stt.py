@@ -4,7 +4,6 @@
 import datetime
 import os
 import re
-import tempfile
 import threading
 import time
 
@@ -15,8 +14,8 @@ import mlx.core as mx
 import numpy as np
 import pyperclip
 import sounddevice as sd
-import soundfile as sf
 from parakeet_mlx import from_pretrained
+from parakeet_mlx.audio import get_logmel
 from pynput import keyboard
 
 NSUserNotification = objc.lookUpClass("NSUserNotification")
@@ -87,9 +86,12 @@ def apply_corrections(text):
     return text
 
 
-def transcribe(audio_file):
+def transcribe(audio_np):
+    """Transcribe a numpy audio array directly, bypassing file I/O + ffmpeg."""
     try:
-        result = parakeet_model.transcribe(audio_file)
+        audio_mx = mx.array(audio_np.flatten())
+        mel = get_logmel(audio_mx, parakeet_model.preprocessor_config)
+        result = parakeet_model.generate(mel)[0]
         return apply_corrections(result.text.strip())
     finally:
         # parakeet_mlx's non-streaming transcribe() never clears MLX's buffer
@@ -173,7 +175,6 @@ def stop_recording():
         print("No audio captured.")
         return
 
-    notify("STT", "Transcribing...")
     print("⏳ Transcribing...")
 
     audio_data = np.concatenate(audio_frames, axis=0)
@@ -181,22 +182,18 @@ def stop_recording():
     # them alive until the next recording started.
     audio_frames = []
 
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-        sf.write(f.name, audio_data, SAMPLE_RATE)
-        tmp_path = f.name
-
-    text = transcribe(tmp_path)
-    os.unlink(tmp_path)
+    # Transcribe directly from memory — no temp file / ffmpeg round-trip.
+    text = transcribe(audio_data)
 
     if text:
         pyperclip.copy(text)
-        time.sleep(0.05)
+        time.sleep(0.01)
         controller = keyboard.Controller()
         controller.press(keyboard.Key.cmd)
         controller.press('v')
         controller.release('v')
         controller.release(keyboard.Key.cmd)
-        save_to_markdown(text)
+        threading.Thread(target=save_to_markdown, args=(text,), daemon=True).start()
         notify("STT", "Pasted to clipboard.")
         print(f"✅ Pasted to focused input:\n{text}")
     else:
