@@ -52,6 +52,21 @@ The transcription is copied to your clipboard and auto-pasted into the focused i
 
 Transcriptions are also appended to `transcriptions.md` in the project directory.
 
+## Stats
+
+Each entry's heading logs duration, word count, and WPM:
+
+```
+## 2026-04-14 15:42:08 (4.2s, 18w, 257 wpm)
+```
+
+From this you can derive:
+
+- Words spoken per day / week
+- Average and peak WPM
+- Total time spent dictating
+- Usage cadence (entries per day, time-of-day patterns)
+
 ## Settings
 
 ### Choosing an input device
