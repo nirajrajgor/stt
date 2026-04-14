@@ -1,10 +1,9 @@
 #!/Users/nirajrajgor/Documents/projects/stt/venv/bin/python3
-"""Speech-to-Text: Press Option+Command to start/stop recording. Transcribes, copies to clipboard, saves to markdown."""
+"""Speech-to-Text: Hold right Option (push-to-talk) OR press Option+Command (toggle). Transcribes, copies to clipboard, saves to markdown."""
 
 import datetime
 import os
 import re
-import tempfile
 import threading
 import time
 
@@ -15,8 +14,8 @@ import mlx.core as mx
 import numpy as np
 import pyperclip
 import sounddevice as sd
-import soundfile as sf
 from parakeet_mlx import from_pretrained
+from parakeet_mlx.audio import get_logmel
 from pynput import keyboard
 
 NSUserNotification = objc.lookUpClass("NSUserNotification")
@@ -29,6 +28,12 @@ NSUserNotificationCenter = objc.lookUpClass("NSUserNotificationCenter")
 SAMPLE_RATE = 16000
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TRANSCRIPTIONS_FILE = os.path.join(SCRIPT_DIR, "transcriptions.md")
+# Ignore hold durations shorter than this — almost always an accidental tap.
+MIN_HOLD_SECONDS = 0.25
+# Safety cap for push-to-talk: if macOS drops the key-release event (screen
+# lock, fullscreen VM, focus change), this prevents an unbounded recording.
+MAX_PTT_SECONDS = 120
+PTT_KEY = keyboard.Key.alt_r
 
 # Common transcription corrections (case-insensitive find → replace)
 CORRECTIONS = {
@@ -45,6 +50,8 @@ audio_frames = []
 stream = None
 lock = threading.Lock()
 pressed_keys = set()
+ptt_held = False
+ptt_auto_stop_timer = None
 
 
 def notify(title, message):
@@ -87,9 +94,12 @@ def apply_corrections(text):
     return text
 
 
-def transcribe(audio_file):
+def transcribe(audio_np):
+    """Transcribe a numpy audio array directly, bypassing file I/O + ffmpeg."""
     try:
-        result = parakeet_model.transcribe(audio_file)
+        audio_mx = mx.array(audio_np.flatten())
+        mel = get_logmel(audio_mx, parakeet_model.preprocessor_config)
+        result = parakeet_model.generate(mel)[0]
         return apply_corrections(result.text.strip())
     finally:
         # parakeet_mlx's non-streaming transcribe() never clears MLX's buffer
@@ -98,9 +108,11 @@ def transcribe(audio_file):
         mx.clear_cache()
 
 
-def save_to_markdown(text):
+def save_to_markdown(text, duration):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    entry = f"\n## {now}\n\n{text}\n"
+    words = len(text.split())
+    wpm = round(words * 60 / duration) if duration > 0 else 0
+    entry = f"\n## {now} ({duration:.1f}s, {words}w, {wpm} wpm)\n\n{text}\n"
 
     # Create file with header if it doesn't exist
     if not os.path.exists(TRANSCRIPTIONS_FILE):
@@ -160,9 +172,12 @@ def start_recording():
 
 
 def stop_recording():
-    global recording, stream, audio_frames
+    global recording, stream, audio_frames, ptt_auto_stop_timer
 
     recording = False
+    if ptt_auto_stop_timer:
+        ptt_auto_stop_timer.cancel()
+        ptt_auto_stop_timer = None
     if stream:
         stream.stop()
         stream.close()
@@ -173,30 +188,32 @@ def stop_recording():
         print("No audio captured.")
         return
 
-    notify("STT", "Transcribing...")
-    print("⏳ Transcribing...")
-
     audio_data = np.concatenate(audio_frames, axis=0)
     # Drop raw chunks now that they're consolidated; the global was keeping
     # them alive until the next recording started.
     audio_frames = []
 
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-        sf.write(f.name, audio_data, SAMPLE_RATE)
-        tmp_path = f.name
+    duration = len(audio_data) / SAMPLE_RATE
 
-    text = transcribe(tmp_path)
-    os.unlink(tmp_path)
+    # Short clips are almost always an accidental push-to-talk tap.
+    if duration < MIN_HOLD_SECONDS:
+        print(f"⏭️  Discarded {duration:.2f}s clip (too short).")
+        return
+
+    print("⏳ Transcribing...")
+
+    # Transcribe directly from memory — no temp file / ffmpeg round-trip.
+    text = transcribe(audio_data)
 
     if text:
         pyperclip.copy(text)
-        time.sleep(0.05)
+        time.sleep(0.01)
         controller = keyboard.Controller()
         controller.press(keyboard.Key.cmd)
         controller.press('v')
         controller.release('v')
         controller.release(keyboard.Key.cmd)
-        save_to_markdown(text)
+        threading.Thread(target=save_to_markdown, args=(text, duration), daemon=True).start()
         notify("STT", "Pasted to clipboard.")
         print(f"✅ Pasted to focused input:\n{text}")
     else:
@@ -213,7 +230,45 @@ def on_hotkey_toggle():
             start_recording()
 
 
+def on_ptt_press():
+    global ptt_auto_stop_timer
+    with lock:
+        if not recording:
+            start_recording()
+            ptt_auto_stop_timer = threading.Timer(MAX_PTT_SECONDS, _ptt_auto_stop)
+            ptt_auto_stop_timer.daemon = True
+            ptt_auto_stop_timer.start()
+
+
+def on_ptt_release():
+    with lock:
+        if recording:
+            stop_recording()
+
+
+def _ptt_auto_stop():
+    """Fail-safe if macOS drops the right-Option release event."""
+    global ptt_held
+    with lock:
+        if recording:
+            print(f"⏱  PTT auto-stopped after {MAX_PTT_SECONDS}s (stuck hotkey?).")
+            # Clear the held flag so the user's eventual (late) release is a
+            # no-op and the next press re-arms cleanly.
+            ptt_held = False
+            stop_recording()
+
+
 def on_press(key):
+    global ptt_held
+    # Push-to-talk: hold right Option. Guard against auto-repeat re-firing
+    # start while the key is already held.
+    if key == PTT_KEY and not ptt_held:
+        ptt_held = True
+        threading.Thread(target=on_ptt_press, daemon=True).start()
+        return
+
+    # Toggle: Option+Command. Use left Option specifically so right Option
+    # stays exclusive to push-to-talk.
     if key in (keyboard.Key.alt_l, keyboard.Key.cmd):
         pressed_keys.add(key)
         if keyboard.Key.alt_l in pressed_keys and keyboard.Key.cmd in pressed_keys:
@@ -222,6 +277,11 @@ def on_press(key):
 
 
 def on_release(key):
+    global ptt_held
+    if key == PTT_KEY and ptt_held:
+        ptt_held = False
+        threading.Thread(target=on_ptt_release, daemon=True).start()
+        return
     pressed_keys.discard(key)
 
 
@@ -229,9 +289,8 @@ def main():
     print("=" * 40)
     print("  Speech-to-Text (Parakeet TDT)")
     print("=" * 40)
-    print("\n  Hotkey: Option + Command")
-    print("  Press to start recording")
-    print("  Press again to stop & transcribe")
+    print("\n  Push-to-talk: hold Right Option")
+    print("  Toggle:       Option + Command (press to start, again to stop)")
     print("  Ctrl+C to quit\n")
 
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
