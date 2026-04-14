@@ -108,9 +108,11 @@ def transcribe(audio_np):
         mx.clear_cache()
 
 
-def save_to_markdown(text):
+def save_to_markdown(text, duration):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    entry = f"\n## {now}\n\n{text}\n"
+    words = len(text.split())
+    wpm = round(words * 60 / duration) if duration > 0 else 0
+    entry = f"\n## {now} ({duration:.1f}s, {words}w, {wpm} wpm)\n\n{text}\n"
 
     # Create file with header if it doesn't exist
     if not os.path.exists(TRANSCRIPTIONS_FILE):
@@ -191,9 +193,11 @@ def stop_recording():
     # them alive until the next recording started.
     audio_frames = []
 
+    duration = len(audio_data) / SAMPLE_RATE
+
     # Short clips are almost always an accidental push-to-talk tap.
-    if len(audio_data) / SAMPLE_RATE < MIN_HOLD_SECONDS:
-        print(f"⏭️  Discarded {len(audio_data) / SAMPLE_RATE:.2f}s clip (too short).")
+    if duration < MIN_HOLD_SECONDS:
+        print(f"⏭️  Discarded {duration:.2f}s clip (too short).")
         return
 
     print("⏳ Transcribing...")
@@ -209,7 +213,7 @@ def stop_recording():
         controller.press('v')
         controller.release('v')
         controller.release(keyboard.Key.cmd)
-        threading.Thread(target=save_to_markdown, args=(text,), daemon=True).start()
+        threading.Thread(target=save_to_markdown, args=(text, duration), daemon=True).start()
         notify("STT", "Pasted to clipboard.")
         print(f"✅ Pasted to focused input:\n{text}")
     else:
