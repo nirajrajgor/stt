@@ -1,5 +1,5 @@
 #!/Users/nirajrajgor/Documents/projects/stt/venv/bin/python3
-"""Speech-to-Text: Press Option+Command to start/stop recording. Transcribes, copies to clipboard, saves to markdown."""
+"""Speech-to-Text: Hold right Option (push-to-talk) OR press Option+Command (toggle). Transcribes, copies to clipboard, saves to markdown."""
 
 import datetime
 import os
@@ -28,6 +28,12 @@ NSUserNotificationCenter = objc.lookUpClass("NSUserNotificationCenter")
 SAMPLE_RATE = 16000
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TRANSCRIPTIONS_FILE = os.path.join(SCRIPT_DIR, "transcriptions.md")
+# Ignore hold durations shorter than this — almost always an accidental tap.
+MIN_HOLD_SECONDS = 0.25
+# Safety cap for push-to-talk: if macOS drops the key-release event (screen
+# lock, fullscreen VM, focus change), this prevents an unbounded recording.
+MAX_PTT_SECONDS = 120
+PTT_KEY = keyboard.Key.alt_r
 
 # Common transcription corrections (case-insensitive find → replace)
 CORRECTIONS = {
@@ -44,6 +50,8 @@ audio_frames = []
 stream = None
 lock = threading.Lock()
 pressed_keys = set()
+ptt_held = False
+ptt_auto_stop_timer = None
 
 
 def notify(title, message):
@@ -162,9 +170,12 @@ def start_recording():
 
 
 def stop_recording():
-    global recording, stream, audio_frames
+    global recording, stream, audio_frames, ptt_auto_stop_timer
 
     recording = False
+    if ptt_auto_stop_timer:
+        ptt_auto_stop_timer.cancel()
+        ptt_auto_stop_timer = None
     if stream:
         stream.stop()
         stream.close()
@@ -175,12 +186,17 @@ def stop_recording():
         print("No audio captured.")
         return
 
-    print("⏳ Transcribing...")
-
     audio_data = np.concatenate(audio_frames, axis=0)
     # Drop raw chunks now that they're consolidated; the global was keeping
     # them alive until the next recording started.
     audio_frames = []
+
+    # Short clips are almost always an accidental push-to-talk tap.
+    if len(audio_data) / SAMPLE_RATE < MIN_HOLD_SECONDS:
+        print(f"⏭️  Discarded {len(audio_data) / SAMPLE_RATE:.2f}s clip (too short).")
+        return
+
+    print("⏳ Transcribing...")
 
     # Transcribe directly from memory — no temp file / ffmpeg round-trip.
     text = transcribe(audio_data)
@@ -210,7 +226,45 @@ def on_hotkey_toggle():
             start_recording()
 
 
+def on_ptt_press():
+    global ptt_auto_stop_timer
+    with lock:
+        if not recording:
+            start_recording()
+            ptt_auto_stop_timer = threading.Timer(MAX_PTT_SECONDS, _ptt_auto_stop)
+            ptt_auto_stop_timer.daemon = True
+            ptt_auto_stop_timer.start()
+
+
+def on_ptt_release():
+    with lock:
+        if recording:
+            stop_recording()
+
+
+def _ptt_auto_stop():
+    """Fail-safe if macOS drops the right-Option release event."""
+    global ptt_held
+    with lock:
+        if recording:
+            print(f"⏱  PTT auto-stopped after {MAX_PTT_SECONDS}s (stuck hotkey?).")
+            # Clear the held flag so the user's eventual (late) release is a
+            # no-op and the next press re-arms cleanly.
+            ptt_held = False
+            stop_recording()
+
+
 def on_press(key):
+    global ptt_held
+    # Push-to-talk: hold right Option. Guard against auto-repeat re-firing
+    # start while the key is already held.
+    if key == PTT_KEY and not ptt_held:
+        ptt_held = True
+        threading.Thread(target=on_ptt_press, daemon=True).start()
+        return
+
+    # Toggle: Option+Command. Use left Option specifically so right Option
+    # stays exclusive to push-to-talk.
     if key in (keyboard.Key.alt_l, keyboard.Key.cmd):
         pressed_keys.add(key)
         if keyboard.Key.alt_l in pressed_keys and keyboard.Key.cmd in pressed_keys:
@@ -219,6 +273,11 @@ def on_press(key):
 
 
 def on_release(key):
+    global ptt_held
+    if key == PTT_KEY and ptt_held:
+        ptt_held = False
+        threading.Thread(target=on_ptt_release, daemon=True).start()
+        return
     pressed_keys.discard(key)
 
 
@@ -226,9 +285,8 @@ def main():
     print("=" * 40)
     print("  Speech-to-Text (Parakeet TDT)")
     print("=" * 40)
-    print("\n  Hotkey: Option + Command")
-    print("  Press to start recording")
-    print("  Press again to stop & transcribe")
+    print("\n  Push-to-talk: hold Right Option")
+    print("  Toggle:       Option + Command (press to start, again to stop)")
     print("  Ctrl+C to quit\n")
 
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)

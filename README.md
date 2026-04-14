@@ -32,7 +32,7 @@ pip install -r requirements.txt
 The script needs two permissions. macOS should prompt for each one the first time it triggers, but you can also grant them manually in **System Settings → Privacy & Security**:
 
 1. **Microphone** — for your terminal app (Terminal.app, iTerm2, etc.). Without this, recordings are silently empty.
-2. **Accessibility** — for your terminal app. Needed so the global hotkey (`Option + Command`) and the simulated `Cmd+V` paste work.
+2. **Accessibility** — for your terminal app. Needed so the global hotkeys and the simulated `Cmd+V` paste work.
 
 After granting either permission, **fully quit and reopen the terminal** (`Cmd+Q`, not just close the window) for it to take effect.
 
@@ -43,13 +43,12 @@ source venv/bin/activate   # if not already active
 ./stt.py
 ```
 
-Then:
+Click into the app/field where you want the text to land, then use either:
 
-1. Click into the app/field where you want the text to land (Slack, editor, browser input, whatever).
-2. Press `Option + Command` to start recording.
-3. Speak.
-4. Press `Option + Command` again to stop.
-5. The transcription is copied to your clipboard and auto-pasted into the focused input.
+- **Push-to-talk**: hold **Right Option**, speak, release. Auto-stops after 120s as a safety cap.
+- **Toggle**: press **Option + Command** to start, press again to stop.
+
+The transcription is copied to your clipboard and auto-pasted into the focused input.
 
 Transcriptions are also appended to `transcriptions.md` in the project directory.
 
