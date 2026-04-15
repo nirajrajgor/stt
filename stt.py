@@ -42,7 +42,10 @@ CORRECTIONS = {
     "para kit": "parakeet",
     "para kate": "parakeet",
     "Shard CN": "shadcn",
-    "superbase": "supabase"
+    "superbase": "supabase",
+    "at the rate": "@",
+    "dot": ".",
+    "comma": ","
 }
 
 recording = False
