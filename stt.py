@@ -214,7 +214,9 @@ def stop_recording():
         controller.release('v')
         controller.release(keyboard.Key.cmd)
         threading.Thread(target=save_to_markdown, args=(text, duration), daemon=True).start()
-        notify("STT", "Pasted to clipboard.")
+        words = len(text.split())
+        wpm = round(words * 60 / duration) if duration > 0 else 0
+        notify("STT", f"Pasted, {wpm} WPM.")
         print(f"✅ Pasted to focused input:\n{text}")
     else:
         notify("STT", "No speech detected.")
