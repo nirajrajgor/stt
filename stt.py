@@ -217,7 +217,7 @@ def stop_recording():
         words = len(text.split())
         wpm = round(words * 60 / duration) if duration > 0 else 0
         notify("STT", f"Pasted, {wpm} WPM.")
-        print(f"✅ Pasted to focused input:\n{text}")
+        print("✅ Pasted to focused input.")
     else:
         notify("STT", "No speech detected.")
         print("No speech detected.")
