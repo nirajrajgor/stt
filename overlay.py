@@ -36,16 +36,16 @@ from Foundation import (
     NSTimer,
 )
 
-WINDOW_WIDTH = 240.0
-WINDOW_HEIGHT = 48.0
+WINDOW_WIDTH = 176.0
+WINDOW_HEIGHT = 44.0
 BOTTOM_MARGIN = 60.0
-BAR_COUNT = 30
-BAR_WIDTH = 3.0
+BAR_COUNT = 18
+BAR_WIDTH = 4.0
 BAR_GAP = 3.0
-CORNER_RADIUS = 20.0
+CORNER_RADIUS = 18.0
 REDRAW_HZ = 30.0
 # RMS of normal speech lands around 0.02–0.15; this scales it to fill the pill.
-AMPLITUDE_SCALE = 8.0
+AMPLITUDE_SCALE = 11.5
 
 _app = None
 _window = None
@@ -74,21 +74,21 @@ class WaveformView(NSView):
         bg = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
             bounds, CORNER_RADIUS, CORNER_RADIUS
         )
-        NSColor.colorWithCalibratedWhite_alpha_(0.0, 0.72).set()
+        NSColor.colorWithCalibratedWhite_alpha_(0.02, 0.96).set()
         bg.fill()
 
         total_w = BAR_COUNT * BAR_WIDTH + (BAR_COUNT - 1) * BAR_GAP
         start_x = (w - total_w) / 2.0
         center_y = h / 2.0
-        min_h = 3.0
-        max_h = h - 14.0
+        min_h = 10.0
+        max_h = h - 10.0
 
         # Snapshot under the lock — iterating the live deque while the audio
         # thread appends raises "deque mutated during iteration".
         with _amp_lock:
             amps = list(_amplitudes)
 
-        NSColor.whiteColor().set()
+        NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.98).set()
         for i, a in enumerate(amps):
             scaled = min(1.0, a * AMPLITUDE_SCALE)
             bh = min_h + scaled * (max_h - min_h)
@@ -186,7 +186,7 @@ def start():
     )
     _window.setOpaque_(False)
     _window.setBackgroundColor_(NSColor.clearColor())
-    _window.setHasShadow_(False)
+    _window.setHasShadow_(True)
     _window.setLevel_(NSStatusWindowLevel)
     _window.setCollectionBehavior_(
         NSWindowCollectionBehaviorCanJoinAllSpaces
