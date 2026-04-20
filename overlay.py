@@ -232,6 +232,11 @@ def hide():
     _run_on_main(_do)
 
 
+def stop():
+    """Stop the Cocoa event loop. Safe from any thread."""
+    _run_on_main(_stop_app)
+
+
 def push_amplitude(level):
     """Append an RMS sample into the rolling buffer. Safe from any thread."""
     with _amp_lock:

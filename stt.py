@@ -57,6 +57,7 @@ lock = threading.Lock()
 pressed_keys = set()
 ptt_held = False
 ptt_auto_stop_timer = None
+shutting_down = False
 
 
 def notify(title, message):
@@ -295,7 +296,25 @@ def on_release(key):
     pressed_keys.discard(key)
 
 
+def _watch_listener(listener):
+    try:
+        listener.join()
+    except Exception as exc:
+        if shutting_down:
+            return
+        print(f"❌ Hotkey listener failed: {exc}")
+        notify("STT", "Hotkey listener failed. Exiting.")
+        overlay.stop()
+        return
+
+    if not shutting_down:
+        print("❌ Hotkey listener stopped unexpectedly.")
+        notify("STT", "Hotkey listener stopped. Exiting.")
+        overlay.stop()
+
+
 def main():
+    global shutting_down
     print("=" * 40)
     print("  Speech-to-Text (Parakeet TDT)")
     print("=" * 40)
@@ -303,15 +322,24 @@ def main():
     print("  Toggle:       Option + Command (press to start, again to stop)")
     print("  Ctrl+C to quit\n")
 
+    shutting_down = False
     overlay.start()
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     listener.start()
+    listener.wait()
+    threading.Thread(target=_watch_listener, args=(listener,), daemon=True).start()
     try:
         overlay.run_forever()
     except KeyboardInterrupt:
         pass
-    listener.stop()
-    print("\nBye!")
+    finally:
+        shutting_down = True
+        listener.stop()
+        try:
+            listener.join(1.0)
+        except Exception:
+            pass
+        print("\nBye!")
 
 
 if __name__ == "__main__":
