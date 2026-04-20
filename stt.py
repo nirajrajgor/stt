@@ -42,7 +42,10 @@ CORRECTIONS = {
     "para kit": "parakeet",
     "para kate": "parakeet",
     "Shard CN": "shadcn",
-    "superbase": "supabase"
+    "superbase": "supabase",
+    "at the rate": "@",
+    "dot": ".",
+    "comma": ","
 }
 
 recording = False
@@ -214,8 +217,10 @@ def stop_recording():
         controller.release('v')
         controller.release(keyboard.Key.cmd)
         threading.Thread(target=save_to_markdown, args=(text, duration), daemon=True).start()
-        notify("STT", "Pasted to clipboard.")
-        print(f"✅ Pasted to focused input:\n{text}")
+        words = len(text.split())
+        wpm = round(words * 60 / duration) if duration > 0 else 0
+        notify("STT", f"Pasted, {wpm} WPM.")
+        print("✅ Pasted to focused input.")
     else:
         notify("STT", "No speech detected.")
         print("No speech detected.")
