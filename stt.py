@@ -18,6 +18,8 @@ from parakeet_mlx import from_pretrained
 from parakeet_mlx.audio import get_logmel
 from pynput import keyboard
 
+import overlay
+
 NSUserNotification = objc.lookUpClass("NSUserNotification")
 NSUserNotificationCenter = objc.lookUpClass("NSUserNotificationCenter")
 
@@ -160,6 +162,7 @@ def start_recording():
     def callback(indata, frames, time, status):
         if recording:
             audio_frames.append(indata.copy())
+            overlay.push_amplitude(float(np.sqrt(np.mean(indata ** 2))))
 
     device = resolve_input_device()
     dev_info = sd.query_devices(device, "input")
@@ -169,6 +172,7 @@ def start_recording():
         samplerate=SAMPLE_RATE, channels=1, callback=callback, device=device
     )
     stream.start()
+    overlay.show()
     notify("STT", "Recording started...")
     print("🎙️  Recording...")
 
@@ -178,6 +182,7 @@ def stop_recording():
     global recording, stream, audio_frames, ptt_auto_stop_timer
 
     recording = False
+    overlay.hide()
     if ptt_auto_stop_timer:
         ptt_auto_stop_timer.cancel()
         ptt_auto_stop_timer = None
@@ -298,13 +303,15 @@ def main():
     print("  Toggle:       Option + Command (press to start, again to stop)")
     print("  Ctrl+C to quit\n")
 
+    overlay.start()
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     listener.start()
     try:
-        listener.join()
+        overlay.run_forever()
     except KeyboardInterrupt:
-        listener.stop()
-        print("\nBye!")
+        pass
+    listener.stop()
+    print("\nBye!")
 
 
 if __name__ == "__main__":
