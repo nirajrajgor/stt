@@ -174,7 +174,6 @@ def start_recording():
     )
     stream.start()
     overlay.show()
-    notify("STT", "Recording started...")
     print("🎙️  Recording...")
 
 
@@ -225,8 +224,7 @@ def stop_recording():
         threading.Thread(target=save_to_markdown, args=(text, duration), daemon=True).start()
         words = len(text.split())
         wpm = round(words * 60 / duration) if duration > 0 else 0
-        notify("STT", f"Pasted, {wpm} WPM.")
-        print("✅ Pasted to focused input.")
+        print(f"✅ Pasted to focused input ({wpm} WPM).")
     else:
         notify("STT", "No speech detected.")
         print("No speech detected.")
