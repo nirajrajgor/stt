@@ -47,7 +47,9 @@ CORRECTIONS = {
     "superbase": "supabase",
     "at the rate": "@",
     "dot": ".",
-    "comma": ","
+    "comma": ",",
+    "hyphen": "-",
+    "slash": "/"
 }
 
 recording = False

@@ -24,7 +24,6 @@ from AppKit import (
     NSView,
     NSWindowCollectionBehaviorCanJoinAllSpaces,
     NSWindowCollectionBehaviorFullScreenAuxiliary,
-    NSWindowCollectionBehaviorStationary,
     NSWindowStyleMaskBorderless,
     NSWindowStyleMaskNonactivatingPanel,
 )
@@ -191,7 +190,6 @@ def start():
     _window.setCollectionBehavior_(
         NSWindowCollectionBehaviorCanJoinAllSpaces
         | NSWindowCollectionBehaviorFullScreenAuxiliary
-        | NSWindowCollectionBehaviorStationary
     )
     _window.setIgnoresMouseEvents_(True)
 
