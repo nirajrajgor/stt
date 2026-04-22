@@ -18,6 +18,8 @@ from parakeet_mlx import from_pretrained
 from parakeet_mlx.audio import get_logmel
 from pynput import keyboard
 
+import overlay
+
 NSUserNotification = objc.lookUpClass("NSUserNotification")
 NSUserNotificationCenter = objc.lookUpClass("NSUserNotificationCenter")
 
@@ -55,6 +57,7 @@ lock = threading.Lock()
 pressed_keys = set()
 ptt_held = False
 ptt_auto_stop_timer = None
+shutting_down = False
 
 
 def notify(title, message):
@@ -160,6 +163,7 @@ def start_recording():
     def callback(indata, frames, time, status):
         if recording:
             audio_frames.append(indata.copy())
+            overlay.push_amplitude(float(np.sqrt(np.mean(indata ** 2))))
 
     device = resolve_input_device()
     dev_info = sd.query_devices(device, "input")
@@ -169,7 +173,7 @@ def start_recording():
         samplerate=SAMPLE_RATE, channels=1, callback=callback, device=device
     )
     stream.start()
-    notify("STT", "Recording started...")
+    overlay.show()
     print("🎙️  Recording...")
 
 
@@ -178,6 +182,7 @@ def stop_recording():
     global recording, stream, audio_frames, ptt_auto_stop_timer
 
     recording = False
+    overlay.hide()
     if ptt_auto_stop_timer:
         ptt_auto_stop_timer.cancel()
         ptt_auto_stop_timer = None
@@ -219,8 +224,7 @@ def stop_recording():
         threading.Thread(target=save_to_markdown, args=(text, duration), daemon=True).start()
         words = len(text.split())
         wpm = round(words * 60 / duration) if duration > 0 else 0
-        notify("STT", f"Pasted, {wpm} WPM.")
-        print("✅ Pasted to focused input.")
+        print(f"✅ Pasted to focused input ({wpm} WPM).")
     else:
         notify("STT", "No speech detected.")
         print("No speech detected.")
@@ -290,7 +294,25 @@ def on_release(key):
     pressed_keys.discard(key)
 
 
+def _watch_listener(listener):
+    try:
+        listener.join()
+    except Exception as exc:
+        if shutting_down:
+            return
+        print(f"❌ Hotkey listener failed: {exc}")
+        notify("STT", "Hotkey listener failed. Exiting.")
+        overlay.stop()
+        return
+
+    if not shutting_down:
+        print("❌ Hotkey listener stopped unexpectedly.")
+        notify("STT", "Hotkey listener stopped. Exiting.")
+        overlay.stop()
+
+
 def main():
+    global shutting_down
     print("=" * 40)
     print("  Speech-to-Text (Parakeet TDT)")
     print("=" * 40)
@@ -298,12 +320,23 @@ def main():
     print("  Toggle:       Option + Command (press to start, again to stop)")
     print("  Ctrl+C to quit\n")
 
+    shutting_down = False
+    overlay.start()
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     listener.start()
+    listener.wait()
+    threading.Thread(target=_watch_listener, args=(listener,), daemon=True).start()
     try:
-        listener.join()
+        overlay.run_forever()
     except KeyboardInterrupt:
+        pass
+    finally:
+        shutting_down = True
         listener.stop()
+        try:
+            listener.join(1.0)
+        except Exception:
+            pass
         print("\nBye!")
 
 
