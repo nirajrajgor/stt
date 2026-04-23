@@ -11,6 +11,7 @@ import Foundation
 import objc
 
 import mlx.core as mx
+import noisereduce as nr
 import numpy as np
 import pyperclip
 import sounddevice as sd
@@ -30,6 +31,15 @@ NSUserNotificationCenter = objc.lookUpClass("NSUserNotificationCenter")
 SAMPLE_RATE = 16000
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TRANSCRIPTIONS_FILE = os.path.join(SCRIPT_DIR, "transcriptions.md")
+# Spectral-gating noise reduction before transcribe.
+#   STT_DENOISE=auto (default): fire only when the clip's noise floor looks
+#     elevated (music/ambient bleed). Clean rooms keep plosive fidelity.
+#   STT_DENOISE=1: always on.
+#   STT_DENOISE=0: always off.
+_DENOISE_MODE = os.environ.get("STT_DENOISE", "auto").lower()
+# RMS of the quietest 10% of 20 ms frames. Tuned against a MacBook Air built-in
+# mic — clean speech sits around 0.003–0.008; music bleed pushes it above ~0.02.
+NOISE_FLOOR_THRESHOLD = 0.015
 # Ignore hold durations shorter than this — almost always an accidental tap.
 MIN_HOLD_SECONDS = 0.25
 # Safety cap for push-to-talk: if macOS drops the key-release event (screen
@@ -37,19 +47,25 @@ MIN_HOLD_SECONDS = 0.25
 MAX_PTT_SECONDS = 120
 PTT_KEY = keyboard.Key.alt_r
 
-# Common transcription corrections (case-insensitive find → replace)
-CORRECTIONS = {
+# Word-for-word transcription fixes (case-insensitive, word-boundary match).
+WORD_CORRECTIONS = {
     "npxcc usage": "npx ccusage",
     "paragate": "parakeet",
     "para kit": "parakeet",
     "para kate": "parakeet",
     "Shard CN": "shadcn",
     "superbase": "supabase",
+}
+
+# Spoken punctuation: eat surrounding whitespace so tokens fuse, e.g.
+# "search hyphen bar dot tsx" → "search-bar.tsx".
+PUNCT_CORRECTIONS = {
     "at the rate": "@",
+    "hyphen": "-",
+    "underscore": "_",
     "dot": ".",
     "comma": ",",
-    "hyphen": "-",
-    "slash": "/"
+    "slash": "/",
 }
 
 recording = False
@@ -97,15 +113,57 @@ print("Model loaded.")
 
 
 def apply_corrections(text):
-    for wrong, right in CORRECTIONS.items():
-        text = re.sub(re.escape(wrong), right, text, flags=re.IGNORECASE)
+    for wrong, right in WORD_CORRECTIONS.items():
+        text = re.sub(rf"\b{re.escape(wrong)}\b", right, text, flags=re.IGNORECASE)
+    for wrong, right in PUNCT_CORRECTIONS.items():
+        # [,.;]? eats the stray comma/period Parakeet adds when the speaker
+        # pauses after a punctuation word (e.g. "at the rate, transcription.md"
+        # → "@transcription.md" instead of "@, transcription.md").
+        text = re.sub(
+            rf"\s*\b{re.escape(wrong)}\b[,.;]?\s*",
+            right,
+            text,
+            flags=re.IGNORECASE,
+        )
+    # Parakeet tacks a sentence-end "." on silence. When the last token is a
+    # filename/URL ("...md.", "...tsx.", "...com."), drop that trailing dot.
+    # Gated on an extension-like prefix so prose sentences keep their period.
+    text = re.sub(r"(\.[a-z0-9]{1,6})\.\s*$", r"\1", text, flags=re.IGNORECASE)
     return text
+
+
+def _noise_floor(audio):
+    """10th-percentile RMS across 20 ms frames — a cheap proxy for ambient noise."""
+    frame = int(SAMPLE_RATE * 0.02)
+    trimmed = audio[: len(audio) // frame * frame]
+    if len(trimmed) < frame:
+        return 0.0
+    frames = trimmed.reshape(-1, frame)
+    frame_rms = np.sqrt(np.mean(frames ** 2, axis=1))
+    return float(np.percentile(frame_rms, 10))
+
+
+def _should_denoise(noise_floor):
+    if _DENOISE_MODE == "0":
+        return False
+    if _DENOISE_MODE == "1":
+        return True
+    return noise_floor > NOISE_FLOOR_THRESHOLD
 
 
 def transcribe(audio_np):
     """Transcribe a numpy audio array directly, bypassing file I/O + ffmpeg."""
     try:
-        audio_mx = mx.array(audio_np.flatten())
+        audio_flat = audio_np.flatten().astype(np.float32)
+        floor = _noise_floor(audio_flat)
+        if _should_denoise(floor):
+            # Non-stationary spectral gating so the noise profile tracks music
+            # that evolves over time rather than assuming a fixed hum.
+            print(f"🔇 Denoising (noise floor {floor:.4f})")
+            audio_flat = nr.reduce_noise(
+                y=audio_flat, sr=SAMPLE_RATE, stationary=False
+            )
+        audio_mx = mx.array(audio_flat)
         mel = get_logmel(audio_mx, parakeet_model.preprocessor_config)
         result = parakeet_model.generate(mel)[0]
         return apply_corrections(result.text.strip())
