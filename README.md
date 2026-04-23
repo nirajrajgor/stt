@@ -89,7 +89,26 @@ python3 -c "import sounddevice as sd; print(sd.query_devices())"
 
 ### Auto-corrections
 
-Common transcription mistakes are fixed via a dictionary at the top of `stt.py` (`CORRECTIONS`). Add your own entries there as needed.
+Common transcription fixes live in two dictionaries at the top of `stt.py`:
+
+- `WORD_CORRECTIONS` — straight word-for-word swaps (e.g. `"paragate" → "parakeet"`).
+- `PUNCT_CORRECTIONS` — spoken punctuation that fuses adjacent tokens (e.g. `"search hyphen bar dot tsx" → "search-bar.tsx"`).
+
+Add your own entries to either as needed.
+
+### Noise suppression
+
+If background music or ambient noise is bleeding into the mic, the transcription can pick up phantom words. The script runs spectral-gating noise reduction (`noisereduce`) before transcribing, gated by an auto-detect on the clip's noise floor — so it only fires when it's actually needed. When it runs, you'll see `🔇 Denoising (noise floor 0.XXXX)` in the terminal.
+
+Override with `STT_DENOISE`:
+
+```bash
+STT_DENOISE=0 ./stt.py     # force off — best for clean rooms; preserves plosive sounds (e.g. "blink")
+STT_DENOISE=1 ./stt.py     # force on — for persistent background noise
+# unset (default):         # auto — denoises only when noise floor exceeds threshold
+```
+
+Trade-off: aggressive denoising can eat short plosives (`/b/`, `/p/`, `/t/`), turning "blink" into "link". The auto-detect avoids this in clean environments, but if you notice initial consonants disappearing, try `STT_DENOISE=0`.
 
 ## Troubleshooting
 
