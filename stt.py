@@ -3,9 +3,11 @@
 
 import datetime
 import os
+import queue
 import re
 import threading
 import time
+import traceback
 
 import Foundation
 import objc
@@ -44,7 +46,7 @@ NOISE_FLOOR_THRESHOLD = 0.015
 MIN_HOLD_SECONDS = 0.25
 # Safety cap for push-to-talk: if macOS drops the key-release event (screen
 # lock, fullscreen VM, focus change), this prevents an unbounded recording.
-MAX_PTT_SECONDS = 120
+MAX_PTT_SECONDS = 360
 PTT_KEY = keyboard.Key.alt_r
 
 # Word-for-word transcription fixes (case-insensitive, word-boundary match).
@@ -76,6 +78,10 @@ pressed_keys = set()
 ptt_held = False
 ptt_auto_stop_timer = None
 shutting_down = False
+
+# Single-consumer queue so a slow transcription can't block the hotkey lock
+# or Ctrl+C, and concurrent clips don't race on the Parakeet model.
+_transcribe_queue = queue.Queue()
 
 
 def notify(title, message):
@@ -239,28 +245,41 @@ def start_recording():
 
 
 def stop_recording():
+    """Flip state and hand the captured frames to the worker. Call with `lock` held."""
     global recording, stream, audio_frames, ptt_auto_stop_timer
+
+    if not recording:
+        return
 
     recording = False
     overlay.hide()
     if ptt_auto_stop_timer:
         ptt_auto_stop_timer.cancel()
         ptt_auto_stop_timer = None
-    if stream:
-        stream.stop()
-        stream.close()
-        stream = None
 
-    if not audio_frames:
+    frames = audio_frames
+    strm = stream
+    audio_frames = []
+    stream = None
+
+    _transcribe_queue.put((frames, strm))
+
+
+def _finish_recording(frames, strm):
+    """Heavy post-recording work. Runs on the worker thread, never under `lock`."""
+    if strm is not None:
+        try:
+            strm.stop()
+            strm.close()
+        except Exception:
+            traceback.print_exc()
+
+    if not frames:
         notify("STT", "No audio captured.")
         print("No audio captured.")
         return
 
-    audio_data = np.concatenate(audio_frames, axis=0)
-    # Drop raw chunks now that they're consolidated; the global was keeping
-    # them alive until the next recording started.
-    audio_frames = []
-
+    audio_data = np.concatenate(frames, axis=0)
     duration = len(audio_data) / SAMPLE_RATE
 
     # Short clips are almost always an accidental push-to-talk tap.
@@ -288,6 +307,16 @@ def stop_recording():
     else:
         notify("STT", "No speech detected.")
         print("No speech detected.")
+
+
+def _transcription_worker():
+    """Single consumer. Serializes Parakeet calls and preserves paste order."""
+    while True:
+        frames, strm = _transcribe_queue.get()
+        try:
+            _finish_recording(frames, strm)
+        except Exception:
+            traceback.print_exc()
 
 
 
@@ -382,6 +411,7 @@ def main():
 
     shutting_down = False
     overlay.start()
+    threading.Thread(target=_transcription_worker, daemon=True).start()
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     listener.start()
     listener.wait()
