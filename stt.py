@@ -2,9 +2,12 @@
 """Speech-to-Text: Hold right Option (push-to-talk) OR press Option+Command (toggle). Transcribes, copies to clipboard, saves to markdown."""
 
 import datetime
+import faulthandler
 import os
 import queue
 import re
+import signal
+import sys
 import threading
 import time
 import traceback
@@ -33,6 +36,7 @@ NSUserNotificationCenter = objc.lookUpClass("NSUserNotificationCenter")
 SAMPLE_RATE = 16000
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TRANSCRIPTIONS_FILE = os.path.join(SCRIPT_DIR, "transcriptions.md")
+LOG_FILE = os.path.join(SCRIPT_DIR, "stt.log")
 # Spectral-gating noise reduction before transcribe.
 #   STT_DENOISE=auto (default): fire only when the clip's noise floor looks
 #     elevated (music/ambient bleed). Clean rooms keep plosive fidelity.
@@ -82,6 +86,49 @@ shutting_down = False
 # Single-consumer queue so a slow transcription can't block the hotkey lock
 # or Ctrl+C, and concurrent clips don't race on the Parakeet model.
 _transcribe_queue = queue.Queue()
+
+
+class _TimestampedTee:
+    """Mirror writes to a terminal stream and a log file, prepending a
+    timestamp to each line in the log."""
+
+    def __init__(self, term, log_fh):
+        self._term = term
+        self._log = log_fh
+        self._buf = ""
+
+    def write(self, s):
+        self._term.write(s)
+        self._buf += s
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self._log.write(f"[{ts}] {line}\n")
+
+    def flush(self):
+        self._term.flush()
+        self._log.flush()
+
+
+def _setup_logging():
+    """Tee stdout/stderr to stt.log with timestamps and wire faulthandler.
+
+    SIGUSR1 dumps every thread's stack to the log — run `kill -USR1 <pid>`
+    from another terminal when the app appears stuck.
+    """
+    log_fh = open(LOG_FILE, "a", buffering=1)
+    log_fh.write(
+        f"\n=== stt.py started {datetime.datetime.now().isoformat(timespec='seconds')} "
+        f"pid={os.getpid()} ===\n"
+    )
+    sys.stdout = _TimestampedTee(sys.stdout, log_fh)
+    sys.stderr = _TimestampedTee(sys.stderr, log_fh)
+    faulthandler.enable(file=log_fh)
+    faulthandler.register(signal.SIGUSR1, file=log_fh, all_threads=True)
+    return log_fh
+
+
+_log_fh = _setup_logging()
 
 
 def notify(title, message):
