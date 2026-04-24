@@ -2,10 +2,15 @@
 """Speech-to-Text: Hold right Option (push-to-talk) OR press Option+Command (toggle). Transcribes, copies to clipboard, saves to markdown."""
 
 import datetime
+import faulthandler
 import os
+import queue
 import re
+import signal
+import sys
 import threading
 import time
+import traceback
 
 import Foundation
 import objc
@@ -31,6 +36,7 @@ NSUserNotificationCenter = objc.lookUpClass("NSUserNotificationCenter")
 SAMPLE_RATE = 16000
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TRANSCRIPTIONS_FILE = os.path.join(SCRIPT_DIR, "transcriptions.md")
+LOG_FILE = os.path.join(SCRIPT_DIR, "stt.log")
 # Spectral-gating noise reduction before transcribe.
 #   STT_DENOISE=auto (default): fire only when the clip's noise floor looks
 #     elevated (music/ambient bleed). Clean rooms keep plosive fidelity.
@@ -44,7 +50,7 @@ NOISE_FLOOR_THRESHOLD = 0.015
 MIN_HOLD_SECONDS = 0.25
 # Safety cap for push-to-talk: if macOS drops the key-release event (screen
 # lock, fullscreen VM, focus change), this prevents an unbounded recording.
-MAX_PTT_SECONDS = 120
+MAX_PTT_SECONDS = 360
 PTT_KEY = keyboard.Key.alt_r
 
 # Word-for-word transcription fixes (case-insensitive, word-boundary match).
@@ -76,6 +82,53 @@ pressed_keys = set()
 ptt_held = False
 ptt_auto_stop_timer = None
 shutting_down = False
+
+# Single-consumer queue so a slow transcription can't block the hotkey lock
+# or Ctrl+C, and concurrent clips don't race on the Parakeet model.
+_transcribe_queue = queue.Queue()
+
+
+class _TimestampedTee:
+    """Mirror writes to a terminal stream and a log file, prepending a
+    timestamp to each line in the log."""
+
+    def __init__(self, term, log_fh):
+        self._term = term
+        self._log = log_fh
+        self._buf = ""
+
+    def write(self, s):
+        self._term.write(s)
+        self._buf += s
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self._log.write(f"[{ts}] {line}\n")
+
+    def flush(self):
+        self._term.flush()
+        self._log.flush()
+
+
+def _setup_logging():
+    """Tee stdout/stderr to stt.log with timestamps and wire faulthandler.
+
+    SIGUSR1 dumps every thread's stack to the log — run `kill -USR1 <pid>`
+    from another terminal when the app appears stuck.
+    """
+    log_fh = open(LOG_FILE, "a", buffering=1)
+    log_fh.write(
+        f"\n=== stt.py started {datetime.datetime.now().isoformat(timespec='seconds')} "
+        f"pid={os.getpid()} ===\n"
+    )
+    sys.stdout = _TimestampedTee(sys.stdout, log_fh)
+    sys.stderr = _TimestampedTee(sys.stderr, log_fh)
+    faulthandler.enable(file=log_fh)
+    faulthandler.register(signal.SIGUSR1, file=log_fh, all_threads=True)
+    return log_fh
+
+
+_log_fh = _setup_logging()
 
 
 def notify(title, message):
@@ -239,28 +292,41 @@ def start_recording():
 
 
 def stop_recording():
+    """Flip state and hand the captured frames to the worker. Call with `lock` held."""
     global recording, stream, audio_frames, ptt_auto_stop_timer
+
+    if not recording:
+        return
 
     recording = False
     overlay.hide()
     if ptt_auto_stop_timer:
         ptt_auto_stop_timer.cancel()
         ptt_auto_stop_timer = None
-    if stream:
-        stream.stop()
-        stream.close()
-        stream = None
 
-    if not audio_frames:
+    frames = audio_frames
+    strm = stream
+    audio_frames = []
+    stream = None
+
+    _transcribe_queue.put((frames, strm))
+
+
+def _finish_recording(frames, strm):
+    """Heavy post-recording work. Runs on the worker thread, never under `lock`."""
+    if strm is not None:
+        try:
+            strm.stop()
+            strm.close()
+        except Exception:
+            traceback.print_exc()
+
+    if not frames:
         notify("STT", "No audio captured.")
         print("No audio captured.")
         return
 
-    audio_data = np.concatenate(audio_frames, axis=0)
-    # Drop raw chunks now that they're consolidated; the global was keeping
-    # them alive until the next recording started.
-    audio_frames = []
-
+    audio_data = np.concatenate(frames, axis=0)
     duration = len(audio_data) / SAMPLE_RATE
 
     # Short clips are almost always an accidental push-to-talk tap.
@@ -288,6 +354,16 @@ def stop_recording():
     else:
         notify("STT", "No speech detected.")
         print("No speech detected.")
+
+
+def _transcription_worker():
+    """Single consumer. Serializes Parakeet calls and preserves paste order."""
+    while True:
+        frames, strm = _transcribe_queue.get()
+        try:
+            _finish_recording(frames, strm)
+        except Exception:
+            traceback.print_exc()
 
 
 
@@ -382,6 +458,7 @@ def main():
 
     shutting_down = False
     overlay.start()
+    threading.Thread(target=_transcription_worker, daemon=True).start()
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     listener.start()
     listener.wait()
