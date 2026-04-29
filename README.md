@@ -18,10 +18,10 @@ git clone <repo-url> stt
 cd stt
 
 # 3. Create a virtual environment with Python's built-in venv module
-python3.14 -m venv venv
+python3 -m venv venv
 
 # 4. Install dependencies into the virtual environment
-venv/bin/pip install -r requirements.txt
+venv/bin/python -m pip install -r requirements.txt
 ```
 
 ## macOS permissions (required)
