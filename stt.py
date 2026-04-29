@@ -28,6 +28,7 @@ import overlay
 
 NSUserNotification = objc.lookUpClass("NSUserNotification")
 NSUserNotificationCenter = objc.lookUpClass("NSUserNotificationCenter")
+NSSound = objc.lookUpClass("NSSound")
 
 # --- Whisper config (commented out, replaced by Parakeet) ---
 # WHISPER_CLI = "whisper-cli"
@@ -52,6 +53,10 @@ MIN_HOLD_SECONDS = 0.25
 # lock, fullscreen VM, focus change), this prevents an unbounded recording.
 MAX_PTT_SECONDS = 360
 PTT_KEY = keyboard.Key.alt_r
+
+# Audio cue on paste complete. Set STT_SOUNDS=0 to disable.
+SOUNDS_ENABLED = os.environ.get("STT_SOUNDS", "1") != "0"
+END_SOUND = "Pop"
 
 # Word-for-word transcription fixes (case-insensitive, word-boundary match).
 WORD_CORRECTIONS = {
@@ -348,6 +353,8 @@ def _finish_recording(frames, strm):
         controller.release('v')
         controller.release(keyboard.Key.cmd)
         threading.Thread(target=save_to_markdown, args=(text, duration), daemon=True).start()
+        if SOUNDS_ENABLED and (s := NSSound.soundNamed_(END_SOUND)):
+            s.play()
         words = len(text.split())
         wpm = round(words * 60 / duration) if duration > 0 else 0
         print(f"✅ Pasted to focused input ({wpm} WPM).")

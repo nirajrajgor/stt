@@ -110,6 +110,10 @@ STT_DENOISE=1 ./stt.py     # force on — for persistent background noise
 
 Trade-off: aggressive denoising can eat short plosives (`/b/`, `/p/`, `/t/`), turning "blink" into "link". The auto-detect avoids this in clean environments, but if you notice initial consonants disappearing, try `STT_DENOISE=0`.
 
+### Paste sound
+
+A short Pop system sound plays after each successful paste. Disable with `STT_SOUNDS=0`.
+
 ## Troubleshooting
 
 - **`AttributeError: 'NoneType' object has no attribute 'removeAllDeliveredNotifications'`** — you're running under Anaconda Python. Recreate the venv using Homebrew Python (see Setup).
