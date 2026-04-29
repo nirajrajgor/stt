@@ -12,6 +12,11 @@ import threading
 import time
 import traceback
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+VENV_PYTHON = os.path.join(SCRIPT_DIR, "venv", "bin", "python")
+if os.path.exists(VENV_PYTHON) and os.path.abspath(sys.executable) != VENV_PYTHON:
+    os.execv(VENV_PYTHON, [VENV_PYTHON, os.path.abspath(__file__), *sys.argv[1:]])
+
 import Foundation
 import objc
 
@@ -35,7 +40,6 @@ NSSound = objc.lookUpClass("NSSound")
 # MODEL_PATH = "/opt/homebrew/Cellar/whisper-cpp/1.8.4/share/whisper-cpp/ggml-medium.bin"
 
 SAMPLE_RATE = 16000
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TRANSCRIPTIONS_FILE = os.path.join(SCRIPT_DIR, "transcriptions.md")
 LOG_FILE = os.path.join(SCRIPT_DIR, "stt.log")
 # Spectral-gating noise reduction before transcribe.
