@@ -1,4 +1,4 @@
-#!/Users/nirajrajgor/Documents/projects/stt/venv/bin/python3
+#!/usr/bin/env python3
 """Speech-to-Text: Hold right Option (push-to-talk) OR press Option+Command (toggle). Transcribes, copies to clipboard, saves to markdown."""
 
 import datetime
