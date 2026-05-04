@@ -50,7 +50,6 @@ pyobjc-framework-Cocoa==12.1
 pyobjc-framework-CoreText==12.1
 pyobjc-framework-Quartz==12.1
 pyparsing==3.3.2
-pyperclip==1.11.0
 python-dateutil==2.9.0.post0
 PyYAML==6.0.3
 regex==2026.4.4
