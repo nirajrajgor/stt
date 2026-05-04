@@ -44,7 +44,7 @@ Click where you want the text to land, then use either:
 - **Push-to-talk**: hold **Right Option**, speak, release.
 - **Toggle**: press **Option + Command** to start, press again to stop.
 
-The transcription is copied to your clipboard, pasted into the focused input, and appended to `transcriptions.md`.
+The transcription is pasted into the focused input and appended to `transcriptions.md`. Your existing clipboard contents are preserved, and the paste is hidden from clipboard history managers (Raycast, Maccy, Alfred, Pastebot, etc.).
 
 ## Settings
 

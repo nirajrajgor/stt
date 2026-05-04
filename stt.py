@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Speech-to-Text: Hold right Option (push-to-talk) OR press Option+Command (toggle). Transcribes, copies to clipboard, saves to markdown."""
+"""Speech-to-Text: Hold right Option (push-to-talk) OR press Option+Command (toggle). Transcribes, pastes into the focused app (preserving your clipboard), saves to markdown."""
 
 import datetime
 import faulthandler
@@ -9,7 +9,6 @@ import re
 import signal
 import sys
 import threading
-import time
 import traceback
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -19,11 +18,11 @@ if os.path.exists(VENV_PYTHON) and os.path.abspath(sys.executable) != VENV_PYTHO
 
 import Foundation
 import objc
+from AppKit import NSPasteboardTypeString
 
 import mlx.core as mx
 import noisereduce as nr
 import numpy as np
-import pyperclip
 import sounddevice as sd
 from parakeet_mlx import from_pretrained
 from parakeet_mlx.audio import get_logmel
@@ -34,6 +33,7 @@ import overlay
 NSUserNotification = objc.lookUpClass("NSUserNotification")
 NSUserNotificationCenter = objc.lookUpClass("NSUserNotificationCenter")
 NSSound = objc.lookUpClass("NSSound")
+NSPasteboard = objc.lookUpClass("NSPasteboard")
 
 # --- Whisper config (commented out, replaced by Parakeet) ---
 # WHISPER_CLI = "whisper-cli"
@@ -138,6 +138,34 @@ def _setup_logging():
 
 
 _log_fh = _setup_logging()
+
+
+def paste_text(text):
+    pb = NSPasteboard.generalPasteboard()
+    prev = pb.stringForType_(NSPasteboardTypeString)
+
+    # nspasteboard.org marker — clipboard managers that honor this UTI skip
+    # the entry instead of writing it to history.
+    pb.clearContents()
+    pb.setString_forType_("", "org.nspasteboard.ConcealedType")
+    pb.setString_forType_(text, NSPasteboardTypeString)
+
+    kb = keyboard.Controller()
+    kb.press(keyboard.Key.cmd)
+    kb.press('v')
+    kb.release('v')
+    kb.release(keyboard.Key.cmd)
+
+    # Skip restore if the user copied something new or another transcription
+    # already pasted — either case would otherwise clobber fresh content.
+    def _restore():
+        if prev is not None and pb.stringForType_(NSPasteboardTypeString) == text:
+            pb.clearContents()
+            pb.setString_forType_(prev, NSPasteboardTypeString)
+
+    t = threading.Timer(0.5, _restore)
+    t.daemon = True
+    t.start()
 
 
 def notify(title, message):
@@ -349,13 +377,7 @@ def _finish_recording(frames, strm):
     text = transcribe(audio_data)
 
     if text:
-        pyperclip.copy(text)
-        time.sleep(0.01)
-        controller = keyboard.Controller()
-        controller.press(keyboard.Key.cmd)
-        controller.press('v')
-        controller.release('v')
-        controller.release(keyboard.Key.cmd)
+        paste_text(text)
         threading.Thread(target=save_to_markdown, args=(text, duration), daemon=True).start()
         if SOUNDS_ENABLED and (s := NSSound.soundNamed_(END_SOUND)):
             s.play()
