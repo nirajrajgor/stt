@@ -18,7 +18,7 @@ if os.path.exists(VENV_PYTHON) and os.path.abspath(sys.executable) != VENV_PYTHO
 
 import Foundation
 import objc
-from AppKit import NSPasteboardTypeString
+from AppKit import NSPasteboardTypeString, NSWorkspace
 
 import mlx.core as mx
 import noisereduce as nr
@@ -412,6 +412,13 @@ def _transcription_worker():
             traceback.print_exc()
 
 
+class _SleepObserver(Foundation.NSObject):
+    """Quits the app when macOS is about to sleep."""
+
+    def willSleep_(self, _notification):
+        print("💤 System sleeping — exiting.")
+        overlay.stop()
+
 
 def on_hotkey_toggle():
     with lock:
@@ -504,6 +511,10 @@ def main():
 
     shutting_down = False
     overlay.start()
+    sleep_observer = _SleepObserver.alloc().init()
+    NSWorkspace.sharedWorkspace().notificationCenter().addObserver_selector_name_object_(
+        sleep_observer, "willSleep:", "NSWorkspaceWillSleepNotification", None
+    )
     threading.Thread(target=_transcription_worker, daemon=True).start()
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     listener.start()
