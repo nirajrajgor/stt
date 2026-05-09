@@ -18,7 +18,7 @@ if os.path.exists(VENV_PYTHON) and os.path.abspath(sys.executable) != VENV_PYTHO
 
 import Foundation
 import objc
-from AppKit import NSPasteboardTypeString
+from AppKit import NSPasteboardTypeString, NSWorkspace
 
 import mlx.core as mx
 import noisereduce as nr
@@ -72,15 +72,21 @@ WORD_CORRECTIONS = {
     "superbase": "supabase",
 }
 
-# Spoken punctuation: eat surrounding whitespace so tokens fuse, e.g.
-# "search hyphen bar dot tsx" → "search-bar.tsx".
-PUNCT_CORRECTIONS = {
-    "at the rate": "@",
+# Spoken punctuation that fuses tokens on BOTH sides — eats whitespace before
+# and after, e.g. "search hyphen bar dot tsx" → "search-bar.tsx".
+PUNCT_FUSE = {
     "hyphen": "-",
     "underscore": "_",
     "dot": ".",
     "comma": ",",
     "slash": "/",
+}
+
+# Spoken punctuation that only fuses to the FOLLOWING token — preserves the
+# leading space so "again at the rate transcription dot md" becomes
+# "again @transcription.md", not "again@transcription.md".
+PUNCT_PREFIX = {
+    "at the rate": "@",
 }
 
 recording = False
@@ -205,12 +211,19 @@ print("Model loaded.")
 def apply_corrections(text):
     for wrong, right in WORD_CORRECTIONS.items():
         text = re.sub(rf"\b{re.escape(wrong)}\b", right, text, flags=re.IGNORECASE)
-    for wrong, right in PUNCT_CORRECTIONS.items():
+    for wrong, right in PUNCT_FUSE.items():
         # [,.;]? eats the stray comma/period Parakeet adds when the speaker
         # pauses after a punctuation word (e.g. "at the rate, transcription.md"
         # → "@transcription.md" instead of "@, transcription.md").
         text = re.sub(
             rf"\s*\b{re.escape(wrong)}\b[,.;]?\s*",
+            right,
+            text,
+            flags=re.IGNORECASE,
+        )
+    for wrong, right in PUNCT_PREFIX.items():
+        text = re.sub(
+            rf"\b{re.escape(wrong)}\b[,.;]?\s*",
             right,
             text,
             flags=re.IGNORECASE,
@@ -399,6 +412,13 @@ def _transcription_worker():
             traceback.print_exc()
 
 
+class _SleepObserver(Foundation.NSObject):
+    """Quits the app when macOS is about to sleep."""
+
+    def willSleep_(self, _notification):
+        print("💤 System sleeping — exiting.")
+        overlay.stop()
+
 
 def on_hotkey_toggle():
     with lock:
@@ -491,6 +511,10 @@ def main():
 
     shutting_down = False
     overlay.start()
+    sleep_observer = _SleepObserver.alloc().init()
+    NSWorkspace.sharedWorkspace().notificationCenter().addObserver_selector_name_object_(
+        sleep_observer, "willSleep:", "NSWorkspaceWillSleepNotification", None
+    )
     threading.Thread(target=_transcription_worker, daemon=True).start()
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     listener.start()
