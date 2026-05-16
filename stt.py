@@ -332,10 +332,17 @@ def start_recording():
     dev_info = sd.query_devices(device, "input")
     print(f"🎙️  Using input device: {dev_info['name']}")
 
-    stream = sd.InputStream(
-        samplerate=SAMPLE_RATE, channels=1, callback=callback, device=device
-    )
-    stream.start()
+    try:
+        stream = sd.InputStream(
+            samplerate=SAMPLE_RATE, channels=1, callback=callback, device=device
+        )
+        stream.start()
+    except Exception:
+        recording = False
+        audio_frames = []
+        stream = None
+        overlay.hide()
+        raise
     overlay.show()
     print("🎙️  Recording...")
 
