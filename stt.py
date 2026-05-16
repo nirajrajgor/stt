@@ -359,11 +359,7 @@ def stop_recording():
     audio_frames = []
     stream = None
 
-    _transcribe_queue.put((frames, strm))
-
-
-def _finish_recording(frames, strm):
-    """Heavy post-recording work. Runs on the worker thread, never under `lock`."""
+    # Stop the callback under lock before another recording can reuse audio_frames.
     if strm is not None:
         try:
             strm.stop()
@@ -371,6 +367,11 @@ def _finish_recording(frames, strm):
         except Exception:
             traceback.print_exc()
 
+    _transcribe_queue.put(frames)
+
+
+def _finish_recording(frames):
+    """Heavy post-recording work. Runs on the worker thread."""
     if not frames:
         notify("STT", "No audio captured.")
         print("No audio captured.")
@@ -405,9 +406,9 @@ def _finish_recording(frames, strm):
 def _transcription_worker():
     """Single consumer. Serializes Parakeet calls and preserves paste order."""
     while True:
-        frames, strm = _transcribe_queue.get()
+        frames = _transcribe_queue.get()
         try:
-            _finish_recording(frames, strm)
+            _finish_recording(frames)
         except Exception:
             traceback.print_exc()
 
