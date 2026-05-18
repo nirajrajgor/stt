@@ -12,24 +12,18 @@ WORD_CORRECTIONS = {
     "superbase": "supabase",
 }
 
-# Fillers that should be removed from pasted/saved transcripts. Keep this list
-# conservative: words like "like" can be meaningful outside obvious hesitations.
-FILLER_PHRASES = (
-    "you know",
-    "i mean",
-)
+# Non-lexical hesitation markers - sound placeholders with no lexical meaning.
+# Always removed.
+HESITATIONS = ("uh", "uhh", "um", "umm", "er", "erm")
 
-FILLER_WORDS = (
-    "ah",
-    "eh",
-    "er",
-    "erm",
-    "hm",
-    "uh",
-    "uhh",
-    "um",
-    "umm",
-)
+# Lexical interjections - carry pragmatic meaning at sentence boundaries
+# ("Ah, I see.", "That's nice, eh?"). Only removed when bracketed by , ; :
+# on BOTH sides so "thinking, ah, never mind" -> "thinking, never mind".
+INTERJECTIONS = ("ah", "ahh", "eh", "ehh", "hm", "hmm")
+
+# Phrases - only removed when followed by , ; : . since they often carry
+# meaning in flowing speech ("you know what I mean").
+FILLER_PHRASES = ("you know", "i mean")
 
 # Spoken punctuation that fuses tokens on BOTH sides - eats whitespace before
 # and after, e.g. "search hyphen bar dot tsx" -> "search-bar.tsx".
@@ -44,29 +38,41 @@ PUNCT_FUSE = {
 # Spoken punctuation that only fuses to the FOLLOWING token - preserves the
 # leading space so "again at the rate transcription dot md" becomes
 # "again @transcription.md", not "again@transcription.md".
-PUNCT_PREFIX = {
-    "at the rate": "@",
-}
+PUNCT_PREFIX = {"at the rate": "@"}
+
+
+def _space_or_empty(match):
+    return "" if match.group(1) == "" else " "
+
+
+def _punct_space_or_empty(match):
+    return match.group(1) + ("" if match.end() == len(match.string) else " ")
+
+
+_FILLER_PHRASE_RE = re.compile(
+    rf"(^|[\s,;:]+)(?:{'|'.join(re.escape(p) for p in FILLER_PHRASES)})\b[,;:.]+(?=\s|$|[!?.,;:])",
+    re.IGNORECASE,
+)
+_HESITATION_RE = re.compile(
+    rf"(^|[\s,;:]+)(?:{'|'.join(re.escape(h) for h in HESITATIONS)})\b[,;:.]?(?=\s|$|[!?.,;:])",
+    re.IGNORECASE,
+)
+_INTERJECTION_RE = re.compile(
+    rf"([,;:])\s*(?:{'|'.join(re.escape(i) for i in INTERJECTIONS)})\b[,;:]\s*",
+    re.IGNORECASE,
+)
+_TRAILING_SPACE_RE = re.compile(r"\s+([,.;:!?])")
+_DUP_PUNCT_RE = re.compile(r"([,;:!?]){2,}")
+_MULTI_SPACE_RE = re.compile(r"\s{2,}")
 
 
 def remove_fillers(text):
-    for filler in FILLER_PHRASES:
-        text = re.sub(
-            rf"(^|[\s,;:]+){re.escape(filler)}\b[,;:.]+(?=\s|$|[!?.,;:])",
-            lambda match: "" if match.group(1) == "" else " ",
-            text,
-            flags=re.IGNORECASE,
-        )
-    for filler in FILLER_WORDS:
-        text = re.sub(
-            rf"(^|[\s,;:]+){re.escape(filler)}\b[,;:.]?(?=\s|$|[!?.,;:])",
-            lambda match: "" if match.group(1) == "" else " ",
-            text,
-            flags=re.IGNORECASE,
-        )
-    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
-    text = re.sub(r"([,;:!?]){2,}", r"\1", text)
-    text = re.sub(r"\s{2,}", " ", text)
+    text = _FILLER_PHRASE_RE.sub(_space_or_empty, text)
+    text = _HESITATION_RE.sub(_space_or_empty, text)
+    text = _INTERJECTION_RE.sub(_punct_space_or_empty, text)
+    text = _TRAILING_SPACE_RE.sub(r"\1", text)
+    text = _DUP_PUNCT_RE.sub(r"\1", text)
+    text = _MULTI_SPACE_RE.sub(" ", text)
     return text.strip(" ,;:")
 
 
