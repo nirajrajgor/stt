@@ -5,7 +5,6 @@ import datetime
 import faulthandler
 import os
 import queue
-import re
 import signal
 import sys
 import threading
@@ -29,6 +28,7 @@ from parakeet_mlx.audio import get_logmel
 from pynput import keyboard
 
 import overlay
+from text_cleanup import apply_corrections
 
 NSUserNotification = objc.lookUpClass("NSUserNotification")
 NSUserNotificationCenter = objc.lookUpClass("NSUserNotificationCenter")
@@ -61,33 +61,6 @@ PTT_KEY = keyboard.Key.alt_r
 # Audio cue on paste complete. Set STT_SOUNDS=0 to disable.
 SOUNDS_ENABLED = os.environ.get("STT_SOUNDS", "1") != "0"
 END_SOUND = "Pop"
-
-# Word-for-word transcription fixes (case-insensitive, word-boundary match).
-WORD_CORRECTIONS = {
-    "npxcc usage": "npx ccusage",
-    "paragate": "parakeet",
-    "para kit": "parakeet",
-    "para kate": "parakeet",
-    "Shard CN": "shadcn",
-    "superbase": "supabase",
-}
-
-# Spoken punctuation that fuses tokens on BOTH sides — eats whitespace before
-# and after, e.g. "search hyphen bar dot tsx" → "search-bar.tsx".
-PUNCT_FUSE = {
-    "hyphen": "-",
-    "underscore": "_",
-    "dot": ".",
-    "comma": ",",
-    "slash": "/",
-}
-
-# Spoken punctuation that only fuses to the FOLLOWING token — preserves the
-# leading space so "again at the rate transcription dot md" becomes
-# "again @transcription.md", not "again@transcription.md".
-PUNCT_PREFIX = {
-    "at the rate": "@",
-}
 
 recording = False
 audio_frames = []
@@ -206,33 +179,6 @@ parakeet_model = from_pretrained("mlx-community/parakeet-tdt-0.6b-v2")
 # the longest transcription. 512 MB is plenty for intermediate tensors.
 mx.set_cache_limit(512 * 1024 * 1024)
 print("Model loaded.")
-
-
-def apply_corrections(text):
-    for wrong, right in WORD_CORRECTIONS.items():
-        text = re.sub(rf"\b{re.escape(wrong)}\b", right, text, flags=re.IGNORECASE)
-    for wrong, right in PUNCT_FUSE.items():
-        # [,.;]? eats the stray comma/period Parakeet adds when the speaker
-        # pauses after a punctuation word (e.g. "at the rate, transcription.md"
-        # → "@transcription.md" instead of "@, transcription.md").
-        text = re.sub(
-            rf"\s*\b{re.escape(wrong)}\b[,.;]?\s*",
-            right,
-            text,
-            flags=re.IGNORECASE,
-        )
-    for wrong, right in PUNCT_PREFIX.items():
-        text = re.sub(
-            rf"\b{re.escape(wrong)}\b[,.;]?\s*",
-            right,
-            text,
-            flags=re.IGNORECASE,
-        )
-    # Parakeet tacks a sentence-end "." on silence. When the last token is a
-    # filename/URL ("...md.", "...tsx.", "...com."), drop that trailing dot.
-    # Gated on an extension-like prefix so prose sentences keep their period.
-    text = re.sub(r"(\.[a-z0-9]{1,6})\.\s*$", r"\1", text, flags=re.IGNORECASE)
-    return text
 
 
 def _noise_floor(audio):
