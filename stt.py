@@ -332,10 +332,17 @@ def start_recording():
     dev_info = sd.query_devices(device, "input")
     print(f"🎙️  Using input device: {dev_info['name']}")
 
-    stream = sd.InputStream(
-        samplerate=SAMPLE_RATE, channels=1, callback=callback, device=device
-    )
-    stream.start()
+    try:
+        stream = sd.InputStream(
+            samplerate=SAMPLE_RATE, channels=1, callback=callback, device=device
+        )
+        stream.start()
+    except Exception:
+        recording = False
+        audio_frames = []
+        stream = None
+        overlay.hide()
+        raise
     overlay.show()
     print("🎙️  Recording...")
 
@@ -359,11 +366,7 @@ def stop_recording():
     audio_frames = []
     stream = None
 
-    _transcribe_queue.put((frames, strm))
-
-
-def _finish_recording(frames, strm):
-    """Heavy post-recording work. Runs on the worker thread, never under `lock`."""
+    # Stop the callback under lock before another recording can reuse audio_frames.
     if strm is not None:
         try:
             strm.stop()
@@ -371,6 +374,11 @@ def _finish_recording(frames, strm):
         except Exception:
             traceback.print_exc()
 
+    _transcribe_queue.put(frames)
+
+
+def _finish_recording(frames):
+    """Heavy post-recording work. Runs on the worker thread."""
     if not frames:
         notify("STT", "No audio captured.")
         print("No audio captured.")
@@ -405,9 +413,9 @@ def _finish_recording(frames, strm):
 def _transcription_worker():
     """Single consumer. Serializes Parakeet calls and preserves paste order."""
     while True:
-        frames, strm = _transcribe_queue.get()
+        frames = _transcribe_queue.get()
         try:
-            _finish_recording(frames, strm)
+            _finish_recording(frames)
         except Exception:
             traceback.print_exc()
 
