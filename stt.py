@@ -215,7 +215,8 @@ def transcribe(audio_np):
         audio_mx = mx.array(audio_flat)
         mel = get_logmel(audio_mx, parakeet_model.preprocessor_config)
         result = parakeet_model.generate(mel)[0]
-        return apply_corrections(result.text.strip())
+        raw = result.text.strip()
+        return raw, apply_corrections(raw)
     finally:
         # parakeet_mlx's non-streaming transcribe() never clears MLX's buffer
         # cache, so cached intermediates from the largest-ever audio clip pin
@@ -223,9 +224,8 @@ def transcribe(audio_np):
         mx.clear_cache()
 
 
-def save_to_markdown(text, duration):
+def save_to_markdown(text, words, duration):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    words = len(text.split())
     wpm = round(words * 60 / duration) if duration > 0 else 0
     entry = f"\n## {now} ({duration:.1f}s, {words}w, {wpm} wpm)\n\n{text}\n"
 
@@ -341,14 +341,14 @@ def _finish_recording(frames):
     print("⏳ Transcribing...")
 
     # Transcribe directly from memory — no temp file / ffmpeg round-trip.
-    text = transcribe(audio_data)
+    raw_text, text = transcribe(audio_data)
 
     if text:
         paste_text(text)
-        threading.Thread(target=save_to_markdown, args=(text, duration), daemon=True).start()
+        words = len(raw_text.split())
+        threading.Thread(target=save_to_markdown, args=(text, words, duration), daemon=True).start()
         if SOUNDS_ENABLED and (s := NSSound.soundNamed_(END_SOUND)):
             s.play()
-        words = len(text.split())
         wpm = round(words * 60 / duration) if duration > 0 else 0
         print(f"✅ Pasted to focused input ({wpm} WPM).")
     else:
