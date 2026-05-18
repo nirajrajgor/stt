@@ -5,7 +5,6 @@ import datetime
 import faulthandler
 import os
 import queue
-import re
 import signal
 import sys
 import threading
@@ -29,6 +28,7 @@ from parakeet_mlx.audio import get_logmel
 from pynput import keyboard
 
 import overlay
+from text_cleanup import apply_corrections
 
 NSUserNotification = objc.lookUpClass("NSUserNotification")
 NSUserNotificationCenter = objc.lookUpClass("NSUserNotificationCenter")
@@ -61,33 +61,6 @@ PTT_KEY = keyboard.Key.alt_r
 # Audio cue on paste complete. Set STT_SOUNDS=0 to disable.
 SOUNDS_ENABLED = os.environ.get("STT_SOUNDS", "1") != "0"
 END_SOUND = "Pop"
-
-# Word-for-word transcription fixes (case-insensitive, word-boundary match).
-WORD_CORRECTIONS = {
-    "npxcc usage": "npx ccusage",
-    "paragate": "parakeet",
-    "para kit": "parakeet",
-    "para kate": "parakeet",
-    "Shard CN": "shadcn",
-    "superbase": "supabase",
-}
-
-# Spoken punctuation that fuses tokens on BOTH sides — eats whitespace before
-# and after, e.g. "search hyphen bar dot tsx" → "search-bar.tsx".
-PUNCT_FUSE = {
-    "hyphen": "-",
-    "underscore": "_",
-    "dot": ".",
-    "comma": ",",
-    "slash": "/",
-}
-
-# Spoken punctuation that only fuses to the FOLLOWING token — preserves the
-# leading space so "again at the rate transcription dot md" becomes
-# "again @transcription.md", not "again@transcription.md".
-PUNCT_PREFIX = {
-    "at the rate": "@",
-}
 
 recording = False
 audio_frames = []
@@ -208,33 +181,6 @@ mx.set_cache_limit(512 * 1024 * 1024)
 print("Model loaded.")
 
 
-def apply_corrections(text):
-    for wrong, right in WORD_CORRECTIONS.items():
-        text = re.sub(rf"\b{re.escape(wrong)}\b", right, text, flags=re.IGNORECASE)
-    for wrong, right in PUNCT_FUSE.items():
-        # [,.;]? eats the stray comma/period Parakeet adds when the speaker
-        # pauses after a punctuation word (e.g. "at the rate, transcription.md"
-        # → "@transcription.md" instead of "@, transcription.md").
-        text = re.sub(
-            rf"\s*\b{re.escape(wrong)}\b[,.;]?\s*",
-            right,
-            text,
-            flags=re.IGNORECASE,
-        )
-    for wrong, right in PUNCT_PREFIX.items():
-        text = re.sub(
-            rf"\b{re.escape(wrong)}\b[,.;]?\s*",
-            right,
-            text,
-            flags=re.IGNORECASE,
-        )
-    # Parakeet tacks a sentence-end "." on silence. When the last token is a
-    # filename/URL ("...md.", "...tsx.", "...com."), drop that trailing dot.
-    # Gated on an extension-like prefix so prose sentences keep their period.
-    text = re.sub(r"(\.[a-z0-9]{1,6})\.\s*$", r"\1", text, flags=re.IGNORECASE)
-    return text
-
-
 def _noise_floor(audio):
     """10th-percentile RMS across 20 ms frames — a cheap proxy for ambient noise."""
     frame = int(SAMPLE_RATE * 0.02)
@@ -269,7 +215,8 @@ def transcribe(audio_np):
         audio_mx = mx.array(audio_flat)
         mel = get_logmel(audio_mx, parakeet_model.preprocessor_config)
         result = parakeet_model.generate(mel)[0]
-        return apply_corrections(result.text.strip())
+        raw = result.text.strip()
+        return raw, apply_corrections(raw)
     finally:
         # parakeet_mlx's non-streaming transcribe() never clears MLX's buffer
         # cache, so cached intermediates from the largest-ever audio clip pin
@@ -277,9 +224,8 @@ def transcribe(audio_np):
         mx.clear_cache()
 
 
-def save_to_markdown(text, duration):
+def save_to_markdown(text, words, duration):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    words = len(text.split())
     wpm = round(words * 60 / duration) if duration > 0 else 0
     entry = f"\n## {now} ({duration:.1f}s, {words}w, {wpm} wpm)\n\n{text}\n"
 
@@ -395,14 +341,14 @@ def _finish_recording(frames):
     print("⏳ Transcribing...")
 
     # Transcribe directly from memory — no temp file / ffmpeg round-trip.
-    text = transcribe(audio_data)
+    raw_text, text = transcribe(audio_data)
 
     if text:
         paste_text(text)
-        threading.Thread(target=save_to_markdown, args=(text, duration), daemon=True).start()
+        words = len(raw_text.split())
+        threading.Thread(target=save_to_markdown, args=(text, words, duration), daemon=True).start()
         if SOUNDS_ENABLED and (s := NSSound.soundNamed_(END_SOUND)):
             s.play()
-        words = len(text.split())
         wpm = round(words * 60 / duration) if duration > 0 else 0
         print(f"✅ Pasted to focused input ({wpm} WPM).")
     else:

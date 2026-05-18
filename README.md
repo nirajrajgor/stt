@@ -70,7 +70,7 @@ STT_DENOISE=1 ./stt.py     # force noise suppression
 STT_SOUNDS=0 ./stt.py      # disable paste sound
 ```
 
-Common transcription fixes live in `WORD_CORRECTIONS` and `PUNCT_CORRECTIONS` near the top of `stt.py`.
+Common transcription fixes live in `text_cleanup.py`. Filler-word cleanup is always on. The `wpm` and word count logged in `transcriptions.md` reflect what you actually spoke (fillers included) — only the saved text is cleaned.
 
 ## Troubleshooting
 
