@@ -23,12 +23,13 @@ import mlx.core as mx
 import noisereduce as nr
 import numpy as np
 import sounddevice as sd
-from parakeet_mlx import from_pretrained
+from parakeet_mlx import DecodingConfig, SentenceConfig, from_pretrained
 from parakeet_mlx.audio import get_logmel
 from pynput import keyboard
 
 import overlay
 from text_cleanup import apply_corrections
+from voice_commands import apply_voice_commands
 
 NSUserNotification = objc.lookUpClass("NSUserNotification")
 NSUserNotificationCenter = objc.lookUpClass("NSUserNotificationCenter")
@@ -57,6 +58,11 @@ MIN_HOLD_SECONDS = 0.25
 # lock, fullscreen VM, focus change), this prevents an unbounded recording.
 MAX_PTT_SECONDS = 360
 PTT_KEY = keyboard.Key.alt_r
+
+# Silence gap (seconds) that separates pause-bounded utterances. Used by
+# Parakeet's sentence segmentation so voice commands like "scratch that" can
+# match a whole utterance flanked by pauses.
+UTTERANCE_GAP = float(os.environ.get("STT_UTTERANCE_GAP", "0.7"))
 
 # Audio cue on paste complete. Set STT_SOUNDS=0 to disable.
 SOUNDS_ENABLED = os.environ.get("STT_SOUNDS", "1") != "0"
@@ -180,6 +186,8 @@ parakeet_model = from_pretrained("mlx-community/parakeet-tdt-0.6b-v2")
 mx.set_cache_limit(512 * 1024 * 1024)
 print("Model loaded.")
 
+_DECODING_CONFIG = DecodingConfig(sentence=SentenceConfig(silence_gap=UTTERANCE_GAP))
+
 
 def _noise_floor(audio):
     """10th-percentile RMS across 20 ms frames — a cheap proxy for ambient noise."""
@@ -214,9 +222,10 @@ def transcribe(audio_np):
             )
         audio_mx = mx.array(audio_flat)
         mel = get_logmel(audio_mx, parakeet_model.preprocessor_config)
-        result = parakeet_model.generate(mel)[0]
+        result = parakeet_model.generate(mel, decoding_config=_DECODING_CONFIG)[0]
         raw = result.text.strip()
-        return raw, apply_corrections(raw)
+        edited = apply_voice_commands(result.sentences)
+        return raw, apply_corrections(edited)
     finally:
         # parakeet_mlx's non-streaming transcribe() never clears MLX's buffer
         # cache, so cached intermediates from the largest-ever audio clip pin
