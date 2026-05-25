@@ -458,8 +458,6 @@ def on_press(key):
         pressed_keys.add(key)
         if keyboard.Key.alt_l in pressed_keys and keyboard.Key.cmd in pressed_keys:
             pressed_keys.clear()
-            if ptt_held:
-                return
             _hotkey_queue.put("toggle")
 
 
