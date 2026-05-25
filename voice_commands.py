@@ -28,7 +28,6 @@ _NUMBER_WORDS = {
 }
 _NUM_PATTERN = r"(\d+|one|two|three|four|five|six|seven|eight|nine)"
 
-_SCRATCH_RE = re.compile(r"^scratch that$", re.IGNORECASE)
 _DELETE_WORDS_RE = re.compile(
     rf"^delete\s+last\s+{_NUM_PATTERN}\s+words?$",
     re.IGNORECASE,
@@ -67,8 +66,7 @@ def apply_voice_commands(sentences):
     for sentence in sentences:
         norm = _normalize(sentence.text)
 
-        m = _SCRATCH_RE.match(norm)
-        if m:
+        if norm.lower() == "scratch that":
             if kept:
                 removed = kept.pop()
                 print(f'✂️  scratched "{removed.strip()}"')
