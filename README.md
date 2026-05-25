@@ -51,7 +51,6 @@ The transcription is pasted into the focused input and appended to `transcriptio
 Pause before and after a command so it is its own utterance:
 
 - `scratch that` — delete the previous utterance
-- `scratch that 3 times` — delete the previous 3 utterances
 - `delete last 3 words` — delete the previous 3 words
 
 Commands apply only within the current recording before paste.

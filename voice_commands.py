@@ -6,7 +6,6 @@ before it's pasted. Commands must occupy their own pause-bounded utterance
 
 Supported:
     "scratch that"               - drop the previous content utterance.
-    "scratch that N times"       - drop the previous N content utterances.
     "delete last N words"        - drop the last N whitespace tokens from the
                                    surviving text.
 
@@ -21,6 +20,7 @@ _LEADING_FILLER_RE = re.compile(
     re.IGNORECASE,
 )
 _TRAILING_PUNCT_RE = re.compile(r"[\s.,;:!?]+$")
+_WORD_RE = re.compile(r"\S+")
 
 _NUMBER_WORDS = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
@@ -28,10 +28,7 @@ _NUMBER_WORDS = {
 }
 _NUM_PATTERN = r"(\d+|one|two|three|four|five|six|seven|eight|nine)"
 
-_SCRATCH_RE = re.compile(
-    rf"^scratch that(?:\s+{_NUM_PATTERN}\s+times?)?$",
-    re.IGNORECASE,
-)
+_SCRATCH_RE = re.compile(r"^scratch that$", re.IGNORECASE)
 _DELETE_WORDS_RE = re.compile(
     rf"^delete\s+last\s+{_NUM_PATTERN}\s+words?$",
     re.IGNORECASE,
@@ -48,6 +45,18 @@ def _normalize(text):
     return _TRAILING_PUNCT_RE.sub("", text).strip()
 
 
+def _delete_last_words(utterances, count):
+    while utterances and count > 0:
+        words = list(_WORD_RE.finditer(utterances[-1]))
+        if len(words) <= count:
+            count -= len(words)
+            utterances.pop()
+            continue
+
+        utterances[-1] = utterances[-1][: words[-count].start()].rstrip()
+        break
+
+
 def apply_voice_commands(sentences):
     """Walk pause-bounded utterances in order, apply spoken edits, return text.
 
@@ -60,16 +69,9 @@ def apply_voice_commands(sentences):
 
         m = _SCRATCH_RE.match(norm)
         if m:
-            n = _parse_count(m.group(1)) if m.group(1) else 1
-            if n is None or n < 1:
-                kept.append(sentence.text)
-                continue
-            n = min(n, len(kept))
-            if n:
-                removed = kept[-n:]
-                del kept[-n:]
-                for r in removed:
-                    print(f'✂️  scratched "{r.strip()}"')
+            if kept:
+                removed = kept.pop()
+                print(f'✂️  scratched "{removed.strip()}"')
             else:
                 print("✂️  scratch ignored (nothing to remove)")
             continue
@@ -80,15 +82,11 @@ def apply_voice_commands(sentences):
             if n is None or n < 1:
                 kept.append(sentence.text)
                 continue
-            words = "".join(kept).split()
-            n = min(n, len(words))
-            if n == 0:
+            if not kept:
                 print("✂️  delete-words ignored (no words yet)")
                 continue
-            dropped = " ".join(words[-n:])
-            remaining = words[:-n]
-            kept = [" ".join(remaining)] if remaining else []
-            print(f'✂️  deleted last {n} words: "{dropped}"')
+            _delete_last_words(kept, n)
+            print(f"✂️  deleted last {n} words")
             continue
 
         kept.append(sentence.text)

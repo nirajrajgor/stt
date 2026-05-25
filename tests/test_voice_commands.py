@@ -19,7 +19,7 @@ def test_scratch_that_deletes_previous_utterance():
     assert result == "Use Postgres."
 
 
-def test_scratch_that_n_times_deletes_previous_n_utterances():
+def test_scratch_that_n_times_stays_literal():
     result = apply_voice_commands(
         sentences(
             "One. ",
@@ -29,7 +29,7 @@ def test_scratch_that_n_times_deletes_previous_n_utterances():
         )
     )
 
-    assert result == "Three."
+    assert result == "One. Two. Scratch that 2 times. Three."
 
 
 def test_delete_last_n_words_deletes_from_accumulated_text():
@@ -41,6 +41,31 @@ def test_delete_last_n_words_deletes_from_accumulated_text():
     )
 
     assert result == "The quick"
+
+
+def test_delete_last_n_words_preserves_utterance_for_later_scratch():
+    result = apply_voice_commands(
+        sentences(
+            "First sentence. ",
+            "Second sentence has extra words. ",
+            "Delete last two words. ",
+            "Scratch that.",
+        )
+    )
+
+    assert result == "First sentence."
+
+
+def test_delete_last_n_words_can_span_utterances():
+    result = apply_voice_commands(
+        sentences(
+            "One two. ",
+            "Three four. ",
+            "Delete last three words.",
+        )
+    )
+
+    assert result == "One"
 
 
 def test_scratch_that_inside_normal_utterance_stays_literal():
