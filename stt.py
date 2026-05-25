@@ -69,6 +69,7 @@ SOUNDS_ENABLED = os.environ.get("STT_SOUNDS", "1") != "0"
 END_SOUND = "Pop"
 
 recording = False
+recording_mode = None
 audio_frames = []
 stream = None
 lock = threading.Lock()
@@ -80,6 +81,7 @@ shutting_down = False
 # Single-consumer queue so a slow transcription can't block the hotkey lock
 # or Ctrl+C, and concurrent clips don't race on the Parakeet model.
 _transcribe_queue = queue.Queue()
+_hotkey_queue = queue.Queue()
 
 
 class _TimestampedTee:
@@ -272,28 +274,29 @@ def resolve_input_device():
     return None
 
 
-def start_recording():
-    global recording, audio_frames, stream
+def start_recording(mode):
+    global recording, recording_mode, audio_frames, stream
 
     audio_frames = []
     recording = True
+    recording_mode = mode
 
     def callback(indata, frames, time, status):
         if recording:
             audio_frames.append(indata.copy())
             overlay.push_amplitude(float(np.sqrt(np.mean(indata ** 2))))
 
-    device = resolve_input_device()
-    dev_info = sd.query_devices(device, "input")
-    print(f"🎙️  Using input device: {dev_info['name']}")
-
     try:
+        device = resolve_input_device()
+        dev_info = sd.query_devices(device, "input")
+        print(f"🎙️  Using input device: {dev_info['name']}")
         stream = sd.InputStream(
             samplerate=SAMPLE_RATE, channels=1, callback=callback, device=device
         )
         stream.start()
     except Exception:
         recording = False
+        recording_mode = None
         audio_frames = []
         stream = None
         overlay.hide()
@@ -303,14 +306,17 @@ def start_recording():
 
 
 
-def stop_recording():
+def stop_recording(expected_mode=None):
     """Flip state and hand the captured frames to the worker. Call with `lock` held."""
-    global recording, stream, audio_frames, ptt_auto_stop_timer
+    global recording, recording_mode, stream, audio_frames, ptt_auto_stop_timer
 
     if not recording:
-        return
+        return False
+    if expected_mode is not None and recording_mode != expected_mode:
+        return False
 
     recording = False
+    recording_mode = None
     overlay.hide()
     if ptt_auto_stop_timer:
         ptt_auto_stop_timer.cancel()
@@ -330,6 +336,7 @@ def stop_recording():
             traceback.print_exc()
 
     _transcribe_queue.put(frames)
+    return True
 
 
 def _finish_recording(frames):
@@ -385,17 +392,34 @@ class _SleepObserver(Foundation.NSObject):
 
 def on_hotkey_toggle():
     with lock:
-        if recording:
-            stop_recording()
-        else:
-            start_recording()
+        if not recording:
+            start_recording("toggle")
+        elif recording_mode == "toggle":
+            stop_recording("toggle")
+
+
+def _hotkey_worker():
+    """Single consumer for hotkey actions so press/release order is preserved."""
+    while True:
+        action = _hotkey_queue.get()
+        try:
+            if action == "toggle":
+                on_hotkey_toggle()
+            elif action == "ptt_press":
+                on_ptt_press()
+            elif action == "ptt_release":
+                on_ptt_release()
+            else:
+                print(f"⚠️  Unknown hotkey action: {action}")
+        except Exception:
+            traceback.print_exc()
 
 
 def on_ptt_press():
     global ptt_auto_stop_timer
     with lock:
         if not recording:
-            start_recording()
+            start_recording("ptt")
             ptt_auto_stop_timer = threading.Timer(MAX_PTT_SECONDS, _ptt_auto_stop)
             ptt_auto_stop_timer.daemon = True
             ptt_auto_stop_timer.start()
@@ -403,20 +427,20 @@ def on_ptt_press():
 
 def on_ptt_release():
     with lock:
-        if recording:
-            stop_recording()
+        if recording_mode == "ptt":
+            stop_recording("ptt")
 
 
 def _ptt_auto_stop():
     """Fail-safe if macOS drops the right-Option release event."""
     global ptt_held
     with lock:
-        if recording:
+        if recording and recording_mode == "ptt":
             print(f"⏱  PTT auto-stopped after {MAX_PTT_SECONDS}s (stuck hotkey?).")
             # Clear the held flag so the user's eventual (late) release is a
             # no-op and the next press re-arms cleanly.
             ptt_held = False
-            stop_recording()
+            stop_recording("ptt")
 
 
 def on_press(key):
@@ -425,7 +449,7 @@ def on_press(key):
     # start while the key is already held.
     if key == PTT_KEY and not ptt_held:
         ptt_held = True
-        threading.Thread(target=on_ptt_press, daemon=True).start()
+        _hotkey_queue.put("ptt_press")
         return
 
     # Toggle: Option+Command. Use left Option specifically so right Option
@@ -434,14 +458,16 @@ def on_press(key):
         pressed_keys.add(key)
         if keyboard.Key.alt_l in pressed_keys and keyboard.Key.cmd in pressed_keys:
             pressed_keys.clear()
-            threading.Thread(target=on_hotkey_toggle, daemon=True).start()
+            if ptt_held:
+                return
+            _hotkey_queue.put("toggle")
 
 
 def on_release(key):
     global ptt_held
     if key == PTT_KEY and ptt_held:
         ptt_held = False
-        threading.Thread(target=on_ptt_release, daemon=True).start()
+        _hotkey_queue.put("ptt_release")
         return
     pressed_keys.discard(key)
 
@@ -479,6 +505,7 @@ def main():
         sleep_observer, "willSleep:", "NSWorkspaceWillSleepNotification", None
     )
     threading.Thread(target=_transcription_worker, daemon=True).start()
+    threading.Thread(target=_hotkey_worker, daemon=True).start()
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     listener.start()
     listener.wait()
