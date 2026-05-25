@@ -52,7 +52,7 @@ def _delete_last_words(utterances, count):
             utterances.pop()
             continue
 
-        utterances[-1] = utterances[-1][: words[-count].start()].rstrip()
+        utterances[-1] = utterances[-1][: words[-count].start()]
         break
 
 

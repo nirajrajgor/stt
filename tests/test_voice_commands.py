@@ -43,6 +43,18 @@ def test_delete_last_n_words_deletes_from_accumulated_text():
     assert result == "The quick"
 
 
+def test_delete_last_n_words_preserves_boundary_before_later_speech():
+    result = apply_voice_commands(
+        sentences(
+            "The quick brown fox jumps. ",
+            "Delete last two words. ",
+            "Then more text.",
+        )
+    )
+
+    assert result == "The quick brown Then more text."
+
+
 def test_delete_last_n_words_preserves_utterance_for_later_scratch():
     result = apply_voice_commands(
         sentences(
