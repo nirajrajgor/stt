@@ -46,6 +46,15 @@ Click where you want the text to land, then use either:
 
 The transcription is pasted into the focused input and appended to `transcriptions.md`. Your existing clipboard contents are preserved, and the paste is hidden from clipboard history managers (Raycast, Maccy, Alfred, Pastebot, etc.).
 
+## Voice commands
+
+Pause before and after a command so it is its own utterance:
+
+- `scratch that` — delete the previous utterance
+- `delete last 3 words` — delete the previous 3 words
+
+Commands apply only within the current recording before paste.
+
 ## Settings
 
 By default, the script uses the macOS default input device. To force a device, set `STT_INPUT_DEVICE` to an index or part of the device name:
