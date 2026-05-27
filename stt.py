@@ -306,7 +306,7 @@ def start_recording(mode):
 
 
 
-def stop_recording(expected_mode=None):
+def stop_recording(expected_mode=None, discard=False):
     """Flip state and hand the captured frames to the worker. Call with `lock` held."""
     global recording, recording_mode, stream, audio_frames, ptt_auto_stop_timer
 
@@ -335,7 +335,10 @@ def stop_recording(expected_mode=None):
         except Exception:
             traceback.print_exc()
 
-    _transcribe_queue.put(frames)
+    if discard:
+        print("🛑 Recording cancelled.")
+    else:
+        _transcribe_queue.put(frames)
     return True
 
 
@@ -386,7 +389,9 @@ class _SleepObserver(Foundation.NSObject):
     """Quits the app when macOS is about to sleep."""
 
     def willSleep_(self, _notification):
-        print("💤 System sleeping — exiting.")
+        print("💤 System sleeping — cancelling recording and exiting.")
+        with lock:
+            stop_recording(discard=True)
         overlay.stop()
 
 
