@@ -84,7 +84,7 @@ python3 -c "import sounddevice as sd; print(sd.query_devices())"
 
 Common transcription fixes live in `text_cleanup.py`. Filler-word cleanup is always on. The `wpm` and word count logged in `transcriptions.md` reflect what you actually spoke (fillers included) — only the saved text is cleaned.
 
-## Development
+## Tests
 
 ```bash
 venv/bin/python -m pip install -r requirements-dev.txt
