@@ -9,6 +9,7 @@ import signal
 import sys
 import threading
 import traceback
+from pathlib import Path
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 VENV_PYTHON = os.path.join(SCRIPT_DIR, "venv", "bin", "python")
@@ -18,6 +19,7 @@ if os.path.exists(VENV_PYTHON) and os.path.abspath(sys.executable) != VENV_PYTHO
 import Foundation
 import objc
 from AppKit import NSPasteboardTypeString, NSWorkspace
+from huggingface_hub import hf_hub_download
 
 import mlx.core as mx
 import noisereduce as nr
@@ -181,8 +183,21 @@ def notify(title, message):
 #     return " ".join(lines)
 
 # --- Parakeet MLX ---
+PARAKEET_REPO = "mlx-community/parakeet-tdt-0.6b-v2"
+
+
+def _load_parakeet(repo):
+    # Load from the local cache to avoid a HF Hub revalidation request on every
+    # startup; only download if the cache is empty (first run).
+    try:
+        config = hf_hub_download(repo, "config.json", local_files_only=True)
+        return from_pretrained(str(Path(config).parent))
+    except Exception:
+        return from_pretrained(repo)
+
+
 print("Loading Parakeet TDT 0.6B v2 model...")
-parakeet_model = from_pretrained("mlx-community/parakeet-tdt-0.6b-v2")
+parakeet_model = _load_parakeet(PARAKEET_REPO)
 # Cap MLX's buffer cache so it reclaims instead of growing unboundedly with
 # the longest transcription. 512 MB is plenty for intermediate tensors.
 mx.set_cache_limit(512 * 1024 * 1024)
