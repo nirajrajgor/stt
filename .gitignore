@@ -1,7 +1,11 @@
 .DS_Store
+.env*
+.claude/
 venv/
 __pycache__/
+.pytest_cache/
 *.pyc
-.claude/
 transcriptions.md
-stt.log
+*.log
+build/
+dist/
