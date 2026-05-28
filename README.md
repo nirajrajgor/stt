@@ -1,10 +1,20 @@
 # stt
 
-Press-to-talk speech-to-text for macOS. Hold a hotkey, speak, release, and the transcription is pasted into the focused app. Runs Parakeet TDT 0.6B v2 locally via MLX.
+Privacy-first speech-to-text for macOS.
+
+- Works entirely offline with Parakeet TDT 0.6B v2 on MLX.
+- Hold a hotkey, speak, release, and text appears in the focused app.
+- Handles quiet speech and noisy rooms with optional denoising.
+- Pastes most short transcriptions in under a second after release.
+- Removes filler words and common transcription mistakes.
+- Supports voice commands like `scratch that` and `delete last 3 words`.
+- Shows a visual recording indicator while you speak.
+- Cancels active recording automatically when macOS goes to sleep.
 
 ## Requirements
 
 - **macOS on Apple Silicon** (M1 / M2 / M3 / …). MLX is arm64-only.
+- **Recommended: 16GB RAM**. Running the model uses approximately 1.5GB RAM.
 - **Homebrew Python, not Anaconda.** Anaconda can break macOS notifications and microphone permissions. Use `brew install python@3.14` (or 3.12 / 3.13).
 
 ## Setup
@@ -23,6 +33,8 @@ python3 -m venv venv
 # 4. Install dependencies into the virtual environment
 venv/bin/python -m pip install -r requirements.txt
 ```
+
+The first run downloads the Parakeet model from Hugging Face and caches it locally.
 
 ## macOS permissions (required)
 
@@ -44,7 +56,7 @@ Click where you want the text to land, then use either:
 - **Push-to-talk**: hold **Right Option**, speak, release.
 - **Toggle**: press **Option + Command** to start, press again to stop.
 
-The transcription is pasted into the focused input and appended to `transcriptions.md`. Your existing clipboard contents are preserved, and the paste is hidden from clipboard history managers (Raycast, Maccy, Alfred, Pastebot, etc.).
+The transcription is pasted into the focused input and appended to `transcriptions.md`. Your existing plain text clipboard contents is preserved and the paste is hidden from clipboard history managers (Raycast, Maccy, Alfred, Pastebot, etc.).
 
 ## Voice commands
 
@@ -57,13 +69,12 @@ Commands apply only within the current recording before paste.
 
 ## Settings
 
-By default, the script uses the macOS default input device. To force a device, set `STT_INPUT_DEVICE` to an index or part of the device name:
+Configure runtime behavior with environment variables:
 
-```bash
-STT_INPUT_DEVICE=webcam ./stt.py
-STT_INPUT_DEVICE="HD Pro" ./stt.py
-STT_INPUT_DEVICE=2 ./stt.py
-```
+- `STT_INPUT_DEVICE=<index|name> ./stt.py` — choose input device by index or name; default: macOS default input.
+- `STT_DENOISE=<auto|0|1> ./stt.py` — `auto` detects noisy clips, `0` disables, `1` forces; default: `auto`.
+- `STT_SOUNDS=<0|1> ./stt.py` — `0` disables paste sound, `1` enables it; default: `1`.
+- `STT_UTTERANCE_GAP=<seconds> ./stt.py` — pause length for voice-command boundaries; default: `0.7`.
 
 List available devices:
 
@@ -71,19 +82,18 @@ List available devices:
 python3 -c "import sounddevice as sd; print(sd.query_devices())"
 ```
 
-Other settings:
+Common transcription fixes live in `text_cleanup.py`. Filler-word cleanup is always on. The `wpm` and word count logged in `transcriptions.md` reflect what you actually spoke (fillers included) — only the saved text is cleaned.
+
+## Development
 
 ```bash
-STT_DENOISE=0 ./stt.py     # disable noise suppression
-STT_DENOISE=1 ./stt.py     # force noise suppression
-STT_SOUNDS=0 ./stt.py      # disable paste sound
+venv/bin/python -m pip install -r requirements-dev.txt
+venv/bin/python -m pytest
 ```
-
-Common transcription fixes live in `text_cleanup.py`. Filler-word cleanup is always on. The `wpm` and word count logged in `transcriptions.md` reflect what you actually spoke (fillers included) — only the saved text is cleaned.
 
 ## Troubleshooting
 
 - **`AttributeError: 'NoneType' object has no attribute 'removeAllDeliveredNotifications'`** — you're running under Anaconda Python. Recreate the venv using Homebrew Python (see Setup).
-- **No audio captured / silent recordings** — the terminal app doesn't have microphone permission, *or* Anaconda Python failed to trigger the TCC prompt. Grant permission manually in System Settings → Privacy & Security → Microphone, then fully quit and reopen the terminal.
+- **No audio captured / silent recordings** — the terminal app doesn't have microphone permission, _or_ Anaconda Python failed to trigger the TCC prompt. Grant permission manually in System Settings → Privacy & Security → Microphone, then fully quit and reopen the terminal.
 - **Hotkey does nothing** — the terminal app doesn't have Accessibility permission. Grant it in System Settings → Privacy & Security → Accessibility and fully restart the terminal.
-- **Transcribed text appears in the terminal instead of where you wanted** — the terminal was the focused window when you stopped recording. Click into your target app *before* pressing the stop hotkey.
+- **Transcribed text appears in the terminal instead of where you wanted** — the terminal was the focused window when you stopped recording. Click into your target app _before_ pressing the stop hotkey.
