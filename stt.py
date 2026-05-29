@@ -3,11 +3,16 @@
 
 import datetime
 import faulthandler
+import json
 import os
 import queue
+import select
 import signal
+import subprocess
 import sys
 import threading
+import tempfile
+import time
 import traceback
 from pathlib import Path
 
@@ -15,6 +20,129 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 VENV_PYTHON = os.path.join(SCRIPT_DIR, "venv", "bin", "python")
 if os.path.exists(VENV_PYTHON) and os.path.abspath(sys.executable) != VENV_PYTHON:
     os.execv(VENV_PYTHON, [VENV_PYTHON, os.path.abspath(__file__), *sys.argv[1:]])
+
+RECORDER_CHILD_ARG = "--record-child"
+
+
+def _record_child_resolve_input_device(sd):
+    override = os.environ.get("STT_INPUT_DEVICE")
+    if override:
+        try:
+            return int(override)
+        except ValueError:
+            needle = override.lower()
+            for idx, dev in enumerate(sd.query_devices()):
+                if dev["max_input_channels"] > 0 and needle in dev["name"].lower():
+                    return idx
+            print(
+                json.dumps(
+                    {
+                        "event": "warning",
+                        "message": (
+                            f"STT_INPUT_DEVICE='{override}' not found; "
+                            "falling back to system default."
+                        ),
+                    }
+                ),
+                flush=True,
+            )
+    return None
+
+
+def _record_child_main():
+    """Own the CoreAudio stream in a disposable process.
+
+    If PortAudio wedges in open/abort/close, the parent can kill this process
+    and release the macOS microphone instead of wedging the hotkey process.
+    """
+    try:
+        out_path = sys.argv[sys.argv.index(RECORDER_CHILD_ARG) + 1]
+    except Exception:
+        print(json.dumps({"event": "error", "message": "missing output path"}), flush=True)
+        os._exit(2)
+
+    try:
+        import numpy as child_np
+        import sounddevice as child_sd
+
+        sample_rate = int(os.environ.get("STT_SAMPLE_RATE", "16000"))
+        frames = []
+        active = True
+        amp_lock = threading.Lock()
+        latest_amp = 0.0
+
+        def callback(indata, frame_count, time_info, status):
+            nonlocal latest_amp
+            if active:
+                frames.append(indata.copy())
+                with amp_lock:
+                    latest_amp = float(child_np.sqrt(child_np.mean(indata ** 2)))
+
+        def emit_amplitudes():
+            while active:
+                with amp_lock:
+                    level = latest_amp
+                print(json.dumps({"event": "amplitude", "level": level}), flush=True)
+                time.sleep(1.0 / 30.0)
+
+        device = _record_child_resolve_input_device(child_sd)
+        dev_info = child_sd.query_devices(device, "input")
+        strm = child_sd.InputStream(
+            samplerate=sample_rate, channels=1, callback=callback, device=device
+        )
+        strm.start()
+        amp_thread = threading.Thread(target=emit_amplitudes, daemon=True)
+        amp_thread.start()
+        print(
+            json.dumps({"event": "ready", "device": dev_info["name"]}),
+            flush=True,
+        )
+
+        command = "STOP"
+        while True:
+            readable, _, _ = select.select([sys.stdin], [], [], 0.1)
+            if not readable:
+                continue
+            line = sys.stdin.readline()
+            if line == "":
+                break
+            command = line.strip().upper() or "STOP"
+            if command in {"STOP", "CANCEL"}:
+                break
+
+        active = False
+        amp_thread.join(0.2)
+        if command != "CANCEL":
+            saved_frames = list(frames)
+            if saved_frames:
+                audio_data = child_np.concatenate(saved_frames, axis=0)
+            else:
+                audio_data = child_np.empty((0, 1), dtype=child_np.float32)
+            child_np.save(out_path, audio_data)
+            print(json.dumps({"event": "saved", "frames": len(saved_frames)}), flush=True)
+
+        def cleanup():
+            try:
+                strm.abort()
+            except Exception:
+                traceback.print_exc()
+            try:
+                strm.close()
+            except Exception:
+                traceback.print_exc()
+
+        cleanup_thread = threading.Thread(target=cleanup, daemon=True)
+        cleanup_thread.start()
+        cleanup_thread.join(0.5)
+        os._exit(0)
+    except Exception as exc:
+        print(json.dumps({"event": "error", "message": str(exc)}), flush=True)
+        traceback.print_exc()
+        os._exit(2)
+
+
+if RECORDER_CHILD_ARG in sys.argv:
+    _record_child_main()
 
 import Foundation
 import objc
@@ -24,7 +152,6 @@ from huggingface_hub import hf_hub_download
 import mlx.core as mx
 import noisereduce as nr
 import numpy as np
-import sounddevice as sd
 from parakeet_mlx import DecodingConfig, SentenceConfig, from_pretrained
 from parakeet_mlx.audio import get_logmel
 from pynput import keyboard
@@ -69,14 +196,15 @@ UTTERANCE_GAP = float(os.environ.get("STT_UTTERANCE_GAP", "0.7"))
 # Audio cue on paste complete. Set STT_SOUNDS=0 to disable.
 SOUNDS_ENABLED = os.environ.get("STT_SOUNDS", "1") != "0"
 END_SOUND = "Pop"
+# Parent waits this long for the child process to either open the mic or fail.
+RECORDER_READY_TIMEOUT = float(os.environ.get("STT_RECORDER_READY_TIMEOUT", "3.0"))
+# After stop, the child saves audio before attempting risky CoreAudio cleanup.
+RECORDER_STOP_TIMEOUT = float(os.environ.get("STT_RECORDER_STOP_TIMEOUT", "2.0"))
 
 recording = False
 recording_mode = None
-audio_frames = []
-stream = None
-# Active session's flag dict; stop_recording flips it off so a stale callback
-# (stream still tearing down) can't append into the next recording.
-current_session = None
+recorder_proc = None
+recorder_output_path = None
 lock = threading.Lock()
 pressed_keys = set()
 ptt_held = False
@@ -267,90 +395,201 @@ def save_to_markdown(text, words, duration):
         f.write(entry)
 
 
-def resolve_input_device():
-    """Pick the input device to record from.
+def _safe_unlink(path):
+    if not path:
+        return
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    except Exception:
+        traceback.print_exc()
 
-    Priority:
-      1. STT_INPUT_DEVICE env var — either an integer index or a case-insensitive
-         substring match against a device name (e.g. "webcam", "macbook").
-      2. The current system default input device.
-    """
-    override = os.environ.get("STT_INPUT_DEVICE")
-    if override:
+
+def _terminate_recorder(proc, grace=0.5):
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
         try:
-            return int(override)
-        except ValueError:
-            needle = override.lower()
-            for idx, dev in enumerate(sd.query_devices()):
-                if dev["max_input_channels"] > 0 and needle in dev["name"].lower():
-                    return idx
-            print(
-                f"⚠️  STT_INPUT_DEVICE='{override}' not found; "
-                "falling back to system default."
+            proc.kill()
+            proc.wait(timeout=grace)
+        except Exception:
+            traceback.print_exc()
+    except Exception:
+        traceback.print_exc()
+
+
+def _recorder_log_tail(lines):
+    if not lines:
+        return ""
+    return " Last recorder output: " + " | ".join(lines[-4:])
+
+
+def _handle_recorder_event(event):
+    kind = event.get("event")
+    if kind == "amplitude":
+        overlay.push_amplitude(float(event.get("level", 0.0)))
+    elif kind == "warning":
+        print(f"⚠️  {event.get('message')}")
+    elif kind == "error":
+        print(f"⚠️  Recorder error: {event.get('message')}")
+
+
+def _watch_recorder_output(proc):
+    if proc.stdout is None:
+        return
+    try:
+        for line in proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                print(line)
+                continue
+            _handle_recorder_event(event)
+    except Exception:
+        traceback.print_exc()
+
+
+def _start_recorder_process():
+    out = tempfile.NamedTemporaryFile(prefix="stt-audio-", suffix=".npy", delete=False)
+    out_path = out.name
+    out.close()
+
+    proc = subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__), RECORDER_CHILD_ARG, out_path],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    lines = []
+    deadline = time.monotonic() + RECORDER_READY_TIMEOUT
+
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            if proc.stdout is not None:
+                remaining = proc.stdout.read()
+                if remaining:
+                    lines.extend(remaining.splitlines())
+            _safe_unlink(out_path)
+            raise RuntimeError(
+                "microphone recorder exited before it was ready."
+                + _recorder_log_tail(lines)
             )
-    # None tells sounddevice to use the current system default input.
-    return None
+
+        readable, _, _ = select.select([proc.stdout], [], [], 0.05)
+        if not readable:
+            continue
+
+        line = proc.stdout.readline()
+        if not line:
+            continue
+        line = line.strip()
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            lines.append(line)
+            continue
+
+        if event.get("event") == "ready":
+            threading.Thread(
+                target=_watch_recorder_output, args=(proc,), daemon=True
+            ).start()
+            return proc, out_path, event.get("device", "default input")
+        if event.get("event") == "warning":
+            print(f"⚠️  {event.get('message')}")
+            continue
+        if event.get("event") == "error":
+            _terminate_recorder(proc)
+            _safe_unlink(out_path)
+            raise RuntimeError(
+                f"microphone recorder failed: {event.get('message')}"
+                + _recorder_log_tail(lines)
+            )
+        lines.append(line)
+
+    _terminate_recorder(proc)
+    _safe_unlink(out_path)
+    raise TimeoutError(
+        f"microphone recorder did not start within {RECORDER_READY_TIMEOUT:.1f}s; "
+        "killed child process to release the mic."
+        + _recorder_log_tail(lines)
+    )
+
+
+def _request_recorder_stop(proc, cancel=False):
+    if proc is None or proc.poll() is not None or proc.stdin is None:
+        return
+    try:
+        proc.stdin.write("CANCEL\n" if cancel else "STOP\n")
+        proc.stdin.flush()
+        proc.stdin.close()
+    except (BrokenPipeError, OSError, ValueError):
+        pass
+
+
+def _discard_recorder_process(proc, out_path):
+    _request_recorder_stop(proc, cancel=True)
+    try:
+        proc.wait(timeout=0.75)
+    except subprocess.TimeoutExpired:
+        _terminate_recorder(proc)
+    except Exception:
+        traceback.print_exc()
+    finally:
+        _safe_unlink(out_path)
+
+
+def _collect_recorder_audio(proc, out_path):
+    try:
+        proc.wait(timeout=RECORDER_STOP_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        print(
+            f"⚠️  Recorder child did not exit within {RECORDER_STOP_TIMEOUT:.1f}s; "
+            "killing it to release the mic."
+        )
+        _terminate_recorder(proc)
+    except Exception:
+        traceback.print_exc()
+
+    try:
+        if out_path and os.path.exists(out_path):
+            return np.load(out_path)
+    finally:
+        _safe_unlink(out_path)
+
+    return np.empty((0, 1), dtype=np.float32)
 
 
 def start_recording(mode):
-    global recording, recording_mode, audio_frames, stream, current_session
-
-    # Per-session frames/flag (not globals): with teardown backgrounded, an old
-    # stream can fire after a new recording starts — keep its frames separate.
-    frames = []
-    session = {"active": True}
-
-    def callback(indata, frame_count, time, status):
-        if session["active"]:
-            frames.append(indata.copy())
-            overlay.push_amplitude(float(np.sqrt(np.mean(indata ** 2))))
+    global recording, recording_mode, recorder_proc, recorder_output_path
 
     try:
-        device = resolve_input_device()
-        dev_info = sd.query_devices(device, "input")
-        print(f"🎙️  Using input device: {dev_info['name']}")
-        strm = sd.InputStream(
-            samplerate=SAMPLE_RATE, channels=1, callback=callback, device=device
-        )
-        strm.start()
+        proc, out_path, device_name = _start_recorder_process()
     except Exception:
         overlay.hide()
+        notify("STT", "Microphone failed to start; recorder child was killed.")
         raise
 
     recording = True
     recording_mode = mode
-    audio_frames = frames
-    stream = strm
-    current_session = session
+    recorder_proc = proc
+    recorder_output_path = out_path
     overlay.show()
+    print(f"🎙️  Using input device: {device_name}")
     print("🎙️  Recording...")
 
 
-
-def _shutdown_stream_async(strm):
-    """Tear down a stream off-thread: CoreAudio's stop can hang, so abort()
-    (drops buffers, returns at once) on a daemon thread keeps a wedged native
-    call from freezing the hotkey path — worst case a leaked thread, not a hang.
-    """
-    def cleanup():
-        try:
-            strm.abort()
-        except Exception:
-            traceback.print_exc()
-        try:
-            strm.close()
-        except Exception:
-            traceback.print_exc()
-
-    threading.Thread(target=cleanup, daemon=True).start()
-
-
 def stop_recording(expected_mode=None, discard=False):
-    """Detach the session and hand its frames to the worker; call with `lock`
-    held. A fast state transition that tears the stream down off-thread —
-    blocking here (on the single-consumer hotkey worker) would freeze hotkeys.
-    """
-    global recording, recording_mode, stream, audio_frames, current_session, ptt_auto_stop_timer
+    """Detach the child recorder and hand it to the worker; call with `lock` held."""
+    global recording, recording_mode, recorder_proc, recorder_output_path, ptt_auto_stop_timer
 
     if not recording:
         return False
@@ -364,35 +603,29 @@ def stop_recording(expected_mode=None, discard=False):
         ptt_auto_stop_timer.cancel()
         ptt_auto_stop_timer = None
 
-    # Mark inactive so the callback stops appending before its stream is closed.
-    if current_session is not None:
-        current_session["active"] = False
-        current_session = None
-    # Snapshot, not alias: a callback past its check can append once more before
-    # teardown; copying keeps that stray write out of the queued list.
-    frames = list(audio_frames)
-    strm = stream
-    audio_frames = []
-    stream = None
-
-    if strm is not None:
-        _shutdown_stream_async(strm)
+    proc = recorder_proc
+    out_path = recorder_output_path
+    recorder_proc = None
+    recorder_output_path = None
 
     if discard:
+        threading.Thread(
+            target=_discard_recorder_process, args=(proc, out_path), daemon=True
+        ).start()
         print("🛑 Recording cancelled.")
     else:
-        _transcribe_queue.put(frames)
+        _request_recorder_stop(proc)
+        _transcribe_queue.put((proc, out_path))
     return True
 
 
-def _finish_recording(frames):
+def _finish_recording(audio_data):
     """Heavy post-recording work. Runs on the worker thread."""
-    if not frames:
+    if audio_data is None or len(audio_data) == 0:
         notify("STT", "No audio captured.")
         print("No audio captured.")
         return
 
-    audio_data = np.concatenate(frames, axis=0)
     duration = len(audio_data) / SAMPLE_RATE
 
     # Short clips are almost always an accidental push-to-talk tap.
@@ -421,9 +654,10 @@ def _finish_recording(frames):
 def _transcription_worker():
     """Single consumer. Serializes Parakeet calls and preserves paste order."""
     while True:
-        frames = _transcribe_queue.get()
+        proc, out_path = _transcribe_queue.get()
         try:
-            _finish_recording(frames)
+            audio_data = _collect_recorder_audio(proc, out_path)
+            _finish_recording(audio_data)
         except Exception:
             traceback.print_exc()
 
