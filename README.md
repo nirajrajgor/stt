@@ -10,6 +10,7 @@ Privacy-first speech-to-text for macOS.
 - Supports voice commands like `scratch that` and `delete last 3 words`.
 - Shows a visual recording indicator while you speak.
 - Cancels active recording automatically when macOS goes to sleep.
+- Currently optimized for English-language speech-to-text.
 
 ## Requirements
 

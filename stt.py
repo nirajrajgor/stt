@@ -74,6 +74,9 @@ recording = False
 recording_mode = None
 audio_frames = []
 stream = None
+# Active session's flag dict; stop_recording flips it off so a stale callback
+# (stream still tearing down) can't append into the next recording.
+current_session = None
 lock = threading.Lock()
 pressed_keys = set()
 ptt_held = False
@@ -290,40 +293,64 @@ def resolve_input_device():
 
 
 def start_recording(mode):
-    global recording, recording_mode, audio_frames, stream
+    global recording, recording_mode, audio_frames, stream, current_session
 
-    audio_frames = []
-    recording = True
-    recording_mode = mode
+    # Per-session frames/flag (not globals): with teardown backgrounded, an old
+    # stream can fire after a new recording starts — keep its frames separate.
+    frames = []
+    session = {"active": True}
 
-    def callback(indata, frames, time, status):
-        if recording:
-            audio_frames.append(indata.copy())
+    def callback(indata, frame_count, time, status):
+        if session["active"]:
+            frames.append(indata.copy())
             overlay.push_amplitude(float(np.sqrt(np.mean(indata ** 2))))
 
     try:
         device = resolve_input_device()
         dev_info = sd.query_devices(device, "input")
         print(f"🎙️  Using input device: {dev_info['name']}")
-        stream = sd.InputStream(
+        strm = sd.InputStream(
             samplerate=SAMPLE_RATE, channels=1, callback=callback, device=device
         )
-        stream.start()
+        strm.start()
     except Exception:
-        recording = False
-        recording_mode = None
-        audio_frames = []
-        stream = None
         overlay.hide()
         raise
+
+    recording = True
+    recording_mode = mode
+    audio_frames = frames
+    stream = strm
+    current_session = session
     overlay.show()
     print("🎙️  Recording...")
 
 
 
+def _shutdown_stream_async(strm):
+    """Tear down a stream off-thread: CoreAudio's stop can hang, so abort()
+    (drops buffers, returns at once) on a daemon thread keeps a wedged native
+    call from freezing the hotkey path — worst case a leaked thread, not a hang.
+    """
+    def cleanup():
+        try:
+            strm.abort()
+        except Exception:
+            traceback.print_exc()
+        try:
+            strm.close()
+        except Exception:
+            traceback.print_exc()
+
+    threading.Thread(target=cleanup, daemon=True).start()
+
+
 def stop_recording(expected_mode=None, discard=False):
-    """Flip state and hand the captured frames to the worker. Call with `lock` held."""
-    global recording, recording_mode, stream, audio_frames, ptt_auto_stop_timer
+    """Detach the session and hand its frames to the worker; call with `lock`
+    held. A fast state transition that tears the stream down off-thread —
+    blocking here (on the single-consumer hotkey worker) would freeze hotkeys.
+    """
+    global recording, recording_mode, stream, audio_frames, current_session, ptt_auto_stop_timer
 
     if not recording:
         return False
@@ -337,18 +364,19 @@ def stop_recording(expected_mode=None, discard=False):
         ptt_auto_stop_timer.cancel()
         ptt_auto_stop_timer = None
 
-    frames = audio_frames
+    # Mark inactive so the callback stops appending before its stream is closed.
+    if current_session is not None:
+        current_session["active"] = False
+        current_session = None
+    # Snapshot, not alias: a callback past its check can append once more before
+    # teardown; copying keeps that stray write out of the queued list.
+    frames = list(audio_frames)
     strm = stream
     audio_frames = []
     stream = None
 
-    # Stop the callback under lock before another recording can reuse audio_frames.
     if strm is not None:
-        try:
-            strm.stop()
-            strm.close()
-        except Exception:
-            traceback.print_exc()
+        _shutdown_stream_async(strm)
 
     if discard:
         print("🛑 Recording cancelled.")
