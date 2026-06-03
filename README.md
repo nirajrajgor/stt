@@ -12,6 +12,12 @@ Privacy-first speech-to-text for macOS.
 - Cancels active recording automatically when macOS goes to sleep.
 - Currently optimized for English-language speech-to-text.
 
+## Demo
+
+<video src="./assets/stt-demo.mp4" controls width="720">
+  Your browser does not support the video tag.
+</video>
+
 ## Requirements
 
 - **macOS on Apple Silicon** (M1 / M2 / M3 / …). MLX is arm64-only.
