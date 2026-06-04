@@ -2,19 +2,20 @@
 
 Privacy-first speech-to-text for macOS.
 
-- Works entirely offline with Parakeet TDT 0.6B v2 on MLX.
+- Works offline.
 - Hold a hotkey, speak, release, and text appears in the focused app.
-- Handles quiet speech and noisy rooms with optional denoising.
-- Pastes most short transcriptions in under a second after release.
-- Removes filler words and common transcription mistakes.
+- Works in noisy env.
+- Handles quiet speech.
+- Avg latency 700ms.
+- Removes filler words ("um", "uh", "hmm").
 - Supports voice commands like `scratch that` and `delete last 3 words`.
-- Shows a visual recording indicator while you speak.
-- Cancels active recording automatically when macOS goes to sleep.
-- Currently optimized for English-language speech-to-text.
+- Visual recording indicator.
+- Auto close on sleep.
+- Optimized for English language.
 
 ## Demo
 
-<video src="https://github.com/user-attachments/assets/3f3739a0-6558-445f-91d8-c8970040b602" controls width="720">
+<video src="https://github.com/user-attachments/assets/7ba238db-53a0-40a9-add9-0b77f314083e" controls width="720">
   Your browser does not support the video tag.
 </video>
 
