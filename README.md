@@ -77,7 +77,7 @@ Commands apply only within the current recording before paste.
 
 ## Settings
 
-Hotkeys are read from `stt.config.toml`, created on first run. See `stt.config.example.toml` for valid key names. `fn` / Globe is not supported.
+Hotkeys are read from `stt.config.toml`, created on first run. See `stt.config.example.toml` for valid key names. `fn` is not supported.
 
 Configure runtime behavior with environment variables:
 
