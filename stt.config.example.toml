@@ -1,0 +1,21 @@
+[hotkeys]
+# One key only. Letters/numbers are not allowed.
+# Valid: right_option, left_option, f18, space
+push_to_talk = "right_option"
+
+# Two or more keys joined with "+". Use exact lowercase names.
+# Valid: left_option+left_command, right_command+right_shift+space
+# Toggle matching is still subset-based by design.
+toggle = "left_option+left_command"
+
+# Supported modifiers:
+# left_command, right_command, left_option, right_option
+# left_control, right_control, left_shift, right_shift
+#
+# Supported keys:
+# space, enter, escape, tab, backspace, delete
+# up, down, left, right, f1 ... f20
+# a ... z, 0 ... 9 (toggle only)
+#
+# Avoid Option + letter/number combos; macOS may turn them into special characters.
+# Not supported: fn, globe
