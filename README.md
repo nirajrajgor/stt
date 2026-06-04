@@ -62,7 +62,7 @@ After granting either permission, **fully quit and reopen the terminal** (`Cmd+Q
 Click where you want the text to land, then use either:
 
 - **Push-to-talk**: hold **Right Option**, speak, release.
-- **Toggle**: press **Option + Command** to start, press again to stop.
+- **Toggle**: press **Left Option + Left Command** to start, press again to stop.
 
 The transcription is pasted into the focused input and appended to `transcriptions.md`. Your existing plain text clipboard contents is preserved and the paste is hidden from clipboard history managers (Raycast, Maccy, Alfred, Pastebot, etc.).
 
@@ -76,6 +76,8 @@ Pause before and after a command so it is its own utterance:
 Commands apply only within the current recording before paste.
 
 ## Settings
+
+Hotkeys are read from `stt.config.toml`, created on first run. See `stt.config.example.toml` for valid key names. `fn` / Globe is not supported.
 
 Configure runtime behavior with environment variables:
 

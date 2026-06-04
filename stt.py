@@ -156,6 +156,7 @@ from parakeet_mlx import DecodingConfig, SentenceConfig, from_pretrained
 from parakeet_mlx.audio import get_logmel
 from pynput import keyboard
 
+import hotkeys
 import overlay
 from text_cleanup import apply_corrections
 from voice_commands import apply_voice_commands
@@ -186,7 +187,6 @@ MIN_HOLD_SECONDS = 0.25
 # Safety cap for push-to-talk: if macOS drops the key-release event (screen
 # lock, fullscreen VM, focus change), this prevents an unbounded recording.
 MAX_PTT_SECONDS = 360
-PTT_KEY = keyboard.Key.alt_r
 
 # Silence gap (seconds) that separates pause-bounded utterances. Used by
 # Parakeet's sentence segmentation so voice commands like "scratch that" can
@@ -208,6 +208,7 @@ recorder_output_path = None
 lock = threading.Lock()
 pressed_keys = set()
 ptt_held = False
+toggle_held = False
 ptt_auto_stop_timer = None
 shutting_down = False
 
@@ -258,6 +259,17 @@ def _setup_logging():
 
 
 _log_fh = _setup_logging()
+
+
+def _load_hotkey_bindings():
+    try:
+        return hotkeys.load_hotkey_bindings()
+    except hotkeys.HotkeyConfigError as exc:
+        print(exc, file=sys.stderr)
+        return None
+
+
+HOTKEY_BINDINGS = None
 
 
 def paste_text(text):
@@ -327,12 +339,17 @@ def _load_parakeet(repo):
         return from_pretrained(repo)
 
 
-print("Loading Parakeet TDT 0.6B v2 model...")
-parakeet_model = _load_parakeet(PARAKEET_REPO)
-# Cap MLX's buffer cache so it reclaims instead of growing unboundedly with
-# the longest transcription. 512 MB is plenty for intermediate tensors.
-mx.set_cache_limit(512 * 1024 * 1024)
-print("Model loaded.")
+parakeet_model = None
+
+
+def _load_model():
+    global parakeet_model
+    print("Loading Parakeet TDT 0.6B v2 model...")
+    parakeet_model = _load_parakeet(PARAKEET_REPO)
+    # Cap MLX's buffer cache so it reclaims instead of growing unboundedly with
+    # the longest transcription. 512 MB is plenty for intermediate tensors.
+    mx.set_cache_limit(512 * 1024 * 1024)
+    print("Model loaded.")
 
 _DECODING_CONFIG = DecodingConfig(sentence=SentenceConfig(silence_gap=UTTERANCE_GAP))
 
@@ -726,30 +743,21 @@ def _ptt_auto_stop():
 
 
 def on_press(key):
-    global ptt_held
-    # Push-to-talk: hold right Option. Guard against auto-repeat re-firing
-    # start while the key is already held.
-    if key == PTT_KEY and not ptt_held:
-        ptt_held = True
-        _hotkey_queue.put("ptt_press")
-        return
-
-    # Toggle: Option+Command. Use left Option specifically so right Option
-    # stays exclusive to push-to-talk.
-    if key in (keyboard.Key.alt_l, keyboard.Key.cmd):
-        pressed_keys.add(key)
-        if keyboard.Key.alt_l in pressed_keys and keyboard.Key.cmd in pressed_keys:
-            pressed_keys.clear()
-            _hotkey_queue.put("toggle")
+    global ptt_held, toggle_held
+    ptt_held, toggle_held, action = hotkeys.handle_key_press(
+        HOTKEY_BINDINGS, pressed_keys, ptt_held, toggle_held, key
+    )
+    if action:
+        _hotkey_queue.put(action)
 
 
 def on_release(key):
-    global ptt_held
-    if key == PTT_KEY and ptt_held:
-        ptt_held = False
-        _hotkey_queue.put("ptt_release")
-        return
-    pressed_keys.discard(key)
+    global ptt_held, toggle_held
+    ptt_held, toggle_held, action = hotkeys.handle_key_release(
+        HOTKEY_BINDINGS, pressed_keys, ptt_held, toggle_held, key
+    )
+    if action:
+        _hotkey_queue.put(action)
 
 
 def _watch_listener(listener):
@@ -770,12 +778,18 @@ def _watch_listener(listener):
 
 
 def main():
-    global shutting_down
+    global HOTKEY_BINDINGS, shutting_down
+    HOTKEY_BINDINGS = _load_hotkey_bindings()
+    if HOTKEY_BINDINGS is None:
+        return 2
+
+    _load_model()
+
     print("=" * 40)
     print("  Speech-to-Text (Parakeet TDT)")
     print("=" * 40)
-    print("\n  Push-to-talk: hold Right Option")
-    print("  Toggle:       Option + Command (press to start, again to stop)")
+    print(f"\n  Push-to-talk: hold {HOTKEY_BINDINGS.push_to_talk_name}")
+    print(f"  Toggle:       {HOTKEY_BINDINGS.toggle_name} (press to start, again to stop)")
     print("  Ctrl+C to quit\n")
 
     shutting_down = False
@@ -802,7 +816,8 @@ def main():
         except Exception:
             pass
         print("\nBye!")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
