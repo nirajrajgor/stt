@@ -15,7 +15,7 @@ Privacy-first speech-to-text for macOS.
 
 ## Demo
 
-<video src="https://github.com/user-attachments/assets/3f3739a0-6558-445f-91d8-c8970040b602" controls width="720">
+<video src="https://github.com/user-attachments/assets/7ba238db-53a0-40a9-add9-0b77f314083e" controls width="720">
   Your browser does not support the video tag.
 </video>
 
