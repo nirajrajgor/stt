@@ -32,7 +32,7 @@ Privacy-first speech-to-text for macOS.
 brew install python@3.14
 
 # 2. Clone and enter the project
-git clone <repo-url> stt
+git clone git@github.com:nirajrajgor/stt.git stt
 cd stt
 
 # 3. Create a virtual environment with Python's built-in venv module
@@ -65,6 +65,8 @@ Click where you want the text to land, then use either:
 - **Toggle**: tap **Left Option + Left Command** to start, tap again to stop.
 
 The transcription is pasted into the focused input and appended to `transcriptions.md`. Your existing plain text clipboard contents is preserved and the paste is hidden from clipboard history managers (Raycast, Maccy, Alfred, Pastebot, etc.).
+
+Works in any app with a focused text field, including Notes, Slack, Mail, ChatGPT, Cursor, and browser text fields.
 
 ## Voice commands
 
