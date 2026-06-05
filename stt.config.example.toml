@@ -3,9 +3,9 @@
 # Valid: right_option, left_option, f18, space
 push_to_talk = "right_option"
 
-# Two or more keys joined with "+". Use exact lowercase names.
+# Two or three keys joined with "+". Use exact lowercase names.
 # Valid: left_option+left_command, right_command+right_shift+space
-# Toggle matching is still subset-based by design.
+# Toggle fires after a clean exact-key tap; extra keys cancel that tap.
 toggle = "left_option+left_command"
 
 # Supported modifiers:

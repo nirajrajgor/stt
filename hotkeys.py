@@ -13,6 +13,7 @@ EXAMPLE_CONFIG_PATH = Path(__file__).with_name("stt.config.example.toml")
 
 DEFAULT_PUSH_TO_TALK = "right_option"
 DEFAULT_TOGGLE = "left_option+left_command"
+MAX_TOGGLE_KEYS = 3
 DEFAULT_CONFIG = (
     "[hotkeys]\n"
     f'push_to_talk = "{DEFAULT_PUSH_TO_TALK}"\n'
@@ -83,33 +84,65 @@ class HotkeyBindings:
         return key == self.push_to_talk_key
 
     def is_toggle_pressed(self, pressed_keys):
-        return self.toggle_keys.issubset(pressed_keys)
+        return pressed_keys == self.toggle_keys
 
 
-def handle_key_press(bindings, pressed_keys, ptt_held, toggle_held, key):
+@dataclass(frozen=True)
+class ToggleChordState:
+    pending: bool = False
+    poisoned: bool = False
+
+
+def handle_key_press(bindings, pressed_keys, ptt_held, toggle_state, key):
     key = normalize_event_key(key)
+    if key is None:
+        return ptt_held, toggle_state, None
 
     if bindings.is_push_to_talk_key(key):
+        if pressed_keys & bindings.toggle_keys:
+            toggle_state = ToggleChordState(poisoned=True)
         if not ptt_held:
-            return True, toggle_held, "ptt_press"
-        return ptt_held, toggle_held, None
+            return True, toggle_state, "ptt_press"
+        return ptt_held, toggle_state, None
+
+    if key in pressed_keys:
+        return ptt_held, toggle_state, None
 
     pressed_keys.add(key)
-    if bindings.is_toggle_pressed(pressed_keys) and not toggle_held:
-        return ptt_held, True, "toggle"
-    return ptt_held, toggle_held, None
+    if ptt_held and key in bindings.toggle_keys:
+        toggle_state = ToggleChordState(poisoned=True)
+    elif pressed_keys & bindings.toggle_keys and pressed_keys - bindings.toggle_keys:
+        toggle_state = ToggleChordState(poisoned=True)
+    elif bindings.is_toggle_pressed(pressed_keys) and not toggle_state.poisoned:
+        toggle_state = ToggleChordState(pending=True)
+    return ptt_held, toggle_state, None
 
 
-def handle_key_release(bindings, pressed_keys, ptt_held, toggle_held, key):
+def handle_key_release(bindings, pressed_keys, ptt_held, toggle_state, key):
     key = normalize_event_key(key)
+    if key is None:
+        return ptt_held, toggle_state, None
 
+    was_toggle_key = key in bindings.toggle_keys
     pressed_keys.discard(key)
-    if not bindings.is_toggle_pressed(pressed_keys):
-        toggle_held = False
 
     if bindings.is_push_to_talk_key(key) and ptt_held:
-        return False, toggle_held, "ptt_release"
-    return ptt_held, toggle_held, None
+        return (
+            False,
+            _reset_toggle_state_if_idle(pressed_keys, False, toggle_state),
+            "ptt_release",
+        )
+
+    if was_toggle_key and toggle_state.pending and not toggle_state.poisoned:
+        return ptt_held, ToggleChordState(), "toggle"
+
+    return ptt_held, _reset_toggle_state_if_idle(pressed_keys, ptt_held, toggle_state), None
+
+
+def _reset_toggle_state_if_idle(pressed_keys, ptt_held, toggle_state):
+    if not pressed_keys and not ptt_held:
+        return ToggleChordState()
+    return toggle_state
 
 
 def ensure_config_exists(config_path=CONFIG_PATH):
@@ -224,6 +257,17 @@ def _parse_toggle(value, path):
                 [
                     source_line,
                     "toggle must include at least two keys joined with '+'.",
+                ],
+            )
+        )
+
+    if len(parts) > MAX_TOGGLE_KEYS:
+        raise HotkeyConfigError(
+            _config_error(
+                path,
+                [
+                    source_line,
+                    f"toggle cannot use more than {MAX_TOGGLE_KEYS} keys.",
                 ],
             )
         )

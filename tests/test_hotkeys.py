@@ -54,6 +54,9 @@ def test_default_hotkeys_match_current_behavior(tmp_path):
 
     assert bindings.is_push_to_talk_key(keyboard.Key.alt_r)
     assert bindings.is_toggle_pressed({keyboard.Key.alt_l, keyboard.Key.cmd})
+    assert not bindings.is_toggle_pressed(
+        {keyboard.Key.alt_l, keyboard.Key.cmd, keyboard.Key.shift}
+    )
 
 
 def test_toggle_can_use_letters_and_numbers(tmp_path):
@@ -62,22 +65,27 @@ def test_toggle_can_use_letters_and_numbers(tmp_path):
     bindings = hotkeys.load_hotkey_bindings(path)
     pressed_keys = set()
     ptt_held = False
-    toggle_held = False
+    toggle_state = hotkeys.ToggleChordState()
 
-    ptt_held, toggle_held, action = hotkeys.handle_key_press(
-        bindings, pressed_keys, ptt_held, toggle_held, keyboard.Key.cmd_l
+    ptt_held, toggle_state, action = hotkeys.handle_key_press(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.Key.cmd_l
     )
     assert action is None
 
-    ptt_held, toggle_held, action = hotkeys.handle_key_press(
-        bindings, pressed_keys, ptt_held, toggle_held, keyboard.KeyCode.from_char("A")
+    ptt_held, toggle_state, action = hotkeys.handle_key_press(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.KeyCode.from_char("A")
     )
     assert action is None
 
-    ptt_held, toggle_held, action = hotkeys.handle_key_press(
-        bindings, pressed_keys, ptt_held, toggle_held, keyboard.KeyCode.from_char("1")
+    ptt_held, toggle_state, action = hotkeys.handle_key_press(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.KeyCode.from_char("1")
     )
-    assert toggle_held is True
+    assert toggle_state == hotkeys.ToggleChordState(pending=True)
+    assert action is None
+
+    ptt_held, toggle_state, action = hotkeys.handle_key_release(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.KeyCode.from_char("1")
+    )
     assert action == "toggle"
 
 
@@ -97,6 +105,9 @@ def test_toggle_allows_option_with_non_letter_keys(tmp_path):
     bindings = hotkeys.load_hotkey_bindings(path)
 
     assert bindings.is_toggle_pressed({keyboard.Key.alt_l, keyboard.Key.space})
+    assert not bindings.is_toggle_pressed(
+        {keyboard.Key.alt_l, keyboard.Key.space, keyboard.Key.shift}
+    )
 
 
 def test_push_to_talk_repeat_does_not_enter_pressed_keys(tmp_path):
@@ -105,19 +116,19 @@ def test_push_to_talk_repeat_does_not_enter_pressed_keys(tmp_path):
     bindings = hotkeys.load_hotkey_bindings(path)
     pressed_keys = set()
 
-    ptt_held, toggle_held, action = hotkeys.handle_key_press(
-        bindings, pressed_keys, False, False, keyboard.Key.space
+    ptt_held, toggle_state, action = hotkeys.handle_key_press(
+        bindings, pressed_keys, False, hotkeys.ToggleChordState(), keyboard.Key.space
     )
     assert ptt_held is True
-    assert toggle_held is False
+    assert toggle_state == hotkeys.ToggleChordState()
     assert action == "ptt_press"
     assert pressed_keys == set()
 
-    ptt_held, toggle_held, action = hotkeys.handle_key_press(
-        bindings, pressed_keys, ptt_held, toggle_held, keyboard.Key.space
+    ptt_held, toggle_state, action = hotkeys.handle_key_press(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.Key.space
     )
     assert ptt_held is True
-    assert toggle_held is False
+    assert toggle_state == hotkeys.ToggleChordState()
     assert action is None
     assert pressed_keys == set()
 
@@ -128,66 +139,155 @@ def test_push_to_talk_release_discards_stale_pressed_key(tmp_path):
     bindings = hotkeys.load_hotkey_bindings(path)
     pressed_keys = {keyboard.Key.space}
 
-    ptt_held, toggle_held, action = hotkeys.handle_key_release(
-        bindings, pressed_keys, True, False, keyboard.Key.space
+    ptt_held, toggle_state, action = hotkeys.handle_key_release(
+        bindings, pressed_keys, True, hotkeys.ToggleChordState(), keyboard.Key.space
     )
 
     assert ptt_held is False
-    assert toggle_held is False
+    assert toggle_state == hotkeys.ToggleChordState()
     assert action == "ptt_release"
     assert pressed_keys == set()
 
 
-def test_toggle_does_not_refire_while_combo_is_held(tmp_path):
+def test_push_to_talk_held_before_toggle_keys_poisons_toggle(tmp_path):
+    path = tmp_path / "stt.config.toml"
+    write_config(path, push_to_talk="right_option", toggle="left_command+left_option")
+    bindings = hotkeys.load_hotkey_bindings(path)
+    pressed_keys = set()
+    ptt_held = True
+    toggle_state = hotkeys.ToggleChordState()
+
+    ptt_held, toggle_state, _ = hotkeys.handle_key_press(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.Key.cmd_l
+    )
+    ptt_held, toggle_state, action = hotkeys.handle_key_press(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.Key.alt_l
+    )
+    assert toggle_state == hotkeys.ToggleChordState(poisoned=True)
+    assert action is None
+
+    ptt_held, toggle_state, action = hotkeys.handle_key_release(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.Key.alt_l
+    )
+    assert action is None
+
+
+def test_toggle_fires_on_release_after_clean_chord(tmp_path):
     path = tmp_path / "stt.config.toml"
     write_config(path, toggle="left_command+a")
     bindings = hotkeys.load_hotkey_bindings(path)
     pressed_keys = set()
 
-    ptt_held, toggle_held, action = hotkeys.handle_key_press(
-        bindings, pressed_keys, False, False, keyboard.Key.cmd_l
+    ptt_held, toggle_state, action = hotkeys.handle_key_press(
+        bindings, pressed_keys, False, hotkeys.ToggleChordState(), keyboard.Key.cmd_l
     )
     assert action is None
 
-    ptt_held, toggle_held, action = hotkeys.handle_key_press(
-        bindings, pressed_keys, ptt_held, toggle_held, keyboard.KeyCode.from_char("a")
+    ptt_held, toggle_state, action = hotkeys.handle_key_press(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.KeyCode.from_char("a")
     )
-    assert toggle_held is True
+    assert toggle_state == hotkeys.ToggleChordState(pending=True)
+    assert action is None
+
+    ptt_held, toggle_state, action = hotkeys.handle_key_release(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.KeyCode.from_char("a")
+    )
+    assert toggle_state == hotkeys.ToggleChordState()
     assert action == "toggle"
 
-    ptt_held, toggle_held, action = hotkeys.handle_key_press(
-        bindings, pressed_keys, ptt_held, toggle_held, keyboard.KeyCode.from_char("b")
+
+def test_extra_key_poisons_toggle_until_all_keys_are_released(tmp_path):
+    path = tmp_path / "stt.config.toml"
+    write_config(path, toggle="left_command+left_option")
+    bindings = hotkeys.load_hotkey_bindings(path)
+    pressed_keys = set()
+    ptt_held = False
+    toggle_state = hotkeys.ToggleChordState()
+
+    ptt_held, toggle_state, _ = hotkeys.handle_key_press(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.Key.cmd_l
     )
-    assert toggle_held is True
+    ptt_held, toggle_state, _ = hotkeys.handle_key_press(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.Key.alt_l
+    )
+    assert toggle_state == hotkeys.ToggleChordState(pending=True)
+
+    ptt_held, toggle_state, action = hotkeys.handle_key_press(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.KeyCode.from_char("a")
+    )
+    assert toggle_state == hotkeys.ToggleChordState(poisoned=True)
+    assert action is None
+
+    ptt_held, toggle_state, action = hotkeys.handle_key_release(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.KeyCode.from_char("a")
+    )
+    assert toggle_state == hotkeys.ToggleChordState(poisoned=True)
+    assert action is None
+
+    ptt_held, toggle_state, action = hotkeys.handle_key_release(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.Key.alt_l
+    )
+    assert toggle_state == hotkeys.ToggleChordState(poisoned=True)
+    assert action is None
+
+    ptt_held, toggle_state, action = hotkeys.handle_key_release(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.Key.cmd_l
+    )
+    assert toggle_state == hotkeys.ToggleChordState()
     assert action is None
 
 
-def test_toggle_rearms_when_tapped_key_is_released(tmp_path):
+def test_extra_key_held_before_toggle_keys_poisons_toggle(tmp_path):
+    path = tmp_path / "stt.config.toml"
+    write_config(path, toggle="left_command+left_option")
+    bindings = hotkeys.load_hotkey_bindings(path)
+    pressed_keys = set()
+    ptt_held = False
+    toggle_state = hotkeys.ToggleChordState()
+
+    ptt_held, toggle_state, _ = hotkeys.handle_key_press(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.KeyCode.from_char("a")
+    )
+    ptt_held, toggle_state, _ = hotkeys.handle_key_press(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.Key.cmd_l
+    )
+    ptt_held, toggle_state, action = hotkeys.handle_key_press(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.Key.alt_l
+    )
+    assert toggle_state == hotkeys.ToggleChordState(poisoned=True)
+    assert action is None
+
+
+def test_toggle_rearms_after_clean_tap_while_modifier_is_still_held(tmp_path):
     path = tmp_path / "stt.config.toml"
     write_config(path, toggle="left_command+a")
     bindings = hotkeys.load_hotkey_bindings(path)
     pressed_keys = set()
     ptt_held = False
-    toggle_held = False
+    toggle_state = hotkeys.ToggleChordState()
 
-    ptt_held, toggle_held, _ = hotkeys.handle_key_press(
-        bindings, pressed_keys, ptt_held, toggle_held, keyboard.Key.cmd_l
+    ptt_held, toggle_state, _ = hotkeys.handle_key_press(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.Key.cmd_l
     )
-    ptt_held, toggle_held, action = hotkeys.handle_key_press(
-        bindings, pressed_keys, ptt_held, toggle_held, keyboard.KeyCode.from_char("a")
+    ptt_held, toggle_state, action = hotkeys.handle_key_press(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.KeyCode.from_char("a")
     )
-    assert action == "toggle"
-
-    ptt_held, toggle_held, action = hotkeys.handle_key_release(
-        bindings, pressed_keys, ptt_held, toggle_held, keyboard.KeyCode.from_char("a")
-    )
-    assert toggle_held is False
     assert action is None
 
-    ptt_held, toggle_held, action = hotkeys.handle_key_press(
-        bindings, pressed_keys, ptt_held, toggle_held, keyboard.KeyCode.from_char("a")
+    ptt_held, toggle_state, action = hotkeys.handle_key_release(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.KeyCode.from_char("a")
     )
-    assert toggle_held is True
+    assert toggle_state == hotkeys.ToggleChordState()
+    assert action == "toggle"
+
+    ptt_held, toggle_state, action = hotkeys.handle_key_press(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.KeyCode.from_char("a")
+    )
+    assert action is None
+
+    ptt_held, toggle_state, action = hotkeys.handle_key_release(
+        bindings, pressed_keys, ptt_held, toggle_state, keyboard.KeyCode.from_char("a")
+    )
     assert action == "toggle"
 
 
@@ -212,6 +312,14 @@ def test_toggle_rejects_single_key(tmp_path):
     write_config(path, toggle="left_command")
 
     with pytest.raises(hotkeys.HotkeyConfigError, match="at least two keys"):
+        hotkeys.load_hotkey_bindings(path)
+
+
+def test_toggle_rejects_more_than_three_keys(tmp_path):
+    path = tmp_path / "stt.config.toml"
+    write_config(path, toggle="left_command+left_option+left_shift+a")
+
+    with pytest.raises(hotkeys.HotkeyConfigError, match="more than 3 keys"):
         hotkeys.load_hotkey_bindings(path)
 
 

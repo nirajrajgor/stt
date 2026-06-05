@@ -62,7 +62,7 @@ After granting either permission, **fully quit and reopen the terminal** (`Cmd+Q
 Click where you want the text to land, then use either:
 
 - **Push-to-talk**: hold **Right Option**, speak, release.
-- **Toggle**: press **Left Option + Left Command** to start, press again to stop.
+- **Toggle**: tap **Left Option + Left Command** to start, tap again to stop.
 
 The transcription is pasted into the focused input and appended to `transcriptions.md`. Your existing plain text clipboard contents is preserved and the paste is hidden from clipboard history managers (Raycast, Maccy, Alfred, Pastebot, etc.).
 

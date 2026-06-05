@@ -208,7 +208,7 @@ recorder_output_path = None
 lock = threading.Lock()
 pressed_keys = set()
 ptt_held = False
-toggle_held = False
+toggle_state = hotkeys.ToggleChordState()
 ptt_auto_stop_timer = None
 shutting_down = False
 
@@ -743,18 +743,18 @@ def _ptt_auto_stop():
 
 
 def on_press(key):
-    global ptt_held, toggle_held
-    ptt_held, toggle_held, action = hotkeys.handle_key_press(
-        HOTKEY_BINDINGS, pressed_keys, ptt_held, toggle_held, key
+    global ptt_held, toggle_state
+    ptt_held, toggle_state, action = hotkeys.handle_key_press(
+        HOTKEY_BINDINGS, pressed_keys, ptt_held, toggle_state, key
     )
     if action:
         _hotkey_queue.put(action)
 
 
 def on_release(key):
-    global ptt_held, toggle_held
-    ptt_held, toggle_held, action = hotkeys.handle_key_release(
-        HOTKEY_BINDINGS, pressed_keys, ptt_held, toggle_held, key
+    global ptt_held, toggle_state
+    ptt_held, toggle_state, action = hotkeys.handle_key_release(
+        HOTKEY_BINDINGS, pressed_keys, ptt_held, toggle_state, key
     )
     if action:
         _hotkey_queue.put(action)
@@ -789,7 +789,7 @@ def main():
     print("  Speech-to-Text (Parakeet TDT)")
     print("=" * 40)
     print(f"\n  Push-to-talk: hold {HOTKEY_BINDINGS.push_to_talk_name}")
-    print(f"  Toggle:       {HOTKEY_BINDINGS.toggle_name} (press to start, again to stop)")
+    print(f"  Toggle:       {HOTKEY_BINDINGS.toggle_name} (tap to start, tap again to stop)")
     print("  Ctrl+C to quit\n")
 
     shutting_down = False
