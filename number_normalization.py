@@ -48,7 +48,16 @@ MONTHS = {
     "december",
 }
 
-DIGIT_CONTEXTS = {"code", "pin", "otp", "zip", "number"}
+DIGIT_CONTEXTS = {"code", "pin", "otp", "zip"}
+DIGIT_NUMBER_PREFIXES = {
+    "case",
+    "confirmation",
+    "invoice",
+    "order",
+    "reference",
+    "ticket",
+    "tracking",
+}
 
 QUANTITY_UNITS = {
     "cent",
@@ -64,8 +73,52 @@ QUANTITY_UNITS = {
     "percent",
     "percentage",
 }
+BARE_MAGNITUDES = {"hundred", "thousand", "million", "billion", "trillion"}
+QUANTITY_PREFIX_BLOCKERS = {"a", "an", "couple", "few", "several"}
 
-TIME_CONTEXTS = {"at"}
+TIME_PREPOSITIONS = {"at"}
+TIME_LEAD_CONTEXTS = {
+    "appointment",
+    "appt",
+    "begin",
+    "began",
+    "begins",
+    "call",
+    "deadline",
+    "depart",
+    "departs",
+    "departure",
+    "dinner",
+    "due",
+    "end",
+    "ended",
+    "ends",
+    "flight",
+    "interview",
+    "lunch",
+    "meet",
+    "meeting",
+    "reservation",
+    "schedule",
+    "scheduled",
+    "standup",
+    "start",
+    "started",
+    "starts",
+    "today",
+    "tomorrow",
+    "tonight",
+    "train",
+}
+WEEKDAYS = {
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+}
 AM_PM = {"am", "pm"}
 
 
@@ -222,11 +275,20 @@ def _parse_time_minute(text, tokens, index):
 
 
 def _has_time_context(tokens, start_index, end_index):
-    if start_index > 0 and tokens[start_index - 1].lower in TIME_CONTEXTS:
-        return True
     if end_index < len(tokens) and tokens[end_index].lower in AM_PM:
         return True
+    if _has_bare_time_context(tokens, start_index):
+        return True
     return False
+
+
+def _has_bare_time_context(tokens, start_index):
+    at_index = start_index - 1
+    if at_index <= 0 or tokens[at_index].lower not in TIME_PREPOSITIONS:
+        return False
+
+    lead = tokens[at_index - 1].lower
+    return lead in TIME_LEAD_CONTEXTS or lead in WEEKDAYS
 
 
 def _add_digit_sequence_replacements(text, tokens, replacements):
@@ -266,14 +328,31 @@ def _has_digit_context(text, tokens, index):
         return False
 
     previous = tokens[index - 1]
-    return previous.lower in DIGIT_CONTEXTS and _is_context_separator(
-        text, previous, tokens[index]
+    if not _is_context_separator(text, previous, tokens[index]):
+        return False
+    if previous.lower in DIGIT_CONTEXTS:
+        return True
+    return _has_identifier_number_context(text, tokens, index - 1)
+
+
+def _has_identifier_number_context(text, tokens, number_index):
+    if number_index == 0 or tokens[number_index].lower != "number":
+        return False
+
+    lead = tokens[number_index - 1]
+    return lead.lower in DIGIT_NUMBER_PREFIXES and _is_context_separator(
+        text, lead, tokens[number_index]
     )
 
 
 def _add_quantity_replacements(text, tokens, replacements):
     index = 0
     while index < len(tokens) - 1:
+        skip_end = _blocked_quantity_skip_end(text, tokens, index)
+        if skip_end is not None:
+            index = skip_end
+            continue
+
         replacement = _parse_quantity_phrase(text, tokens, index)
         if not replacement:
             index += 1
@@ -292,6 +371,8 @@ def _add_quantity_replacements(text, tokens, replacements):
 def _parse_quantity_phrase(text, tokens, index):
     if _looks_like_ungated_time_tail(text, tokens, index):
         return None
+    if _has_blocked_bare_magnitude_prefix(tokens, index):
+        return None
 
     max_unit_index = min(len(tokens), index + 8)
     for unit_index in range(index + 1, max_unit_index):
@@ -307,6 +388,31 @@ def _parse_quantity_phrase(text, tokens, index):
         if normalized is not None:
             return unit_index, normalized
     return None
+
+
+def _blocked_quantity_skip_end(text, tokens, index):
+    if not _has_blocked_bare_magnitude_prefix(tokens, index):
+        return None
+
+    max_unit_index = min(len(tokens), index + 8)
+    for unit_index in range(index + 1, max_unit_index):
+        if tokens[unit_index].lower not in QUANTITY_UNITS:
+            continue
+        if not _is_phrase_separator(text, tokens[unit_index - 1], tokens[unit_index]):
+            continue
+
+        phrase = _token_phrase(text, tokens, index, unit_index)
+        if phrase is not None and _normalize_number_phrase(phrase) is not None:
+            return unit_index + 1
+    return None
+
+
+def _has_blocked_bare_magnitude_prefix(tokens, index):
+    return (
+        index > 0
+        and tokens[index].lower in BARE_MAGNITUDES
+        and tokens[index - 1].lower in QUANTITY_PREFIX_BLOCKERS
+    )
 
 
 def _looks_like_ungated_time_tail(text, tokens, index):

@@ -5,11 +5,21 @@ def test_digit_sequences_normalize_with_context():
     assert apply_corrections("code one two three four") == "code 1234"
     assert apply_corrections("pin: zero one zero five") == "pin: 0105"
     assert apply_corrections("order number, one oh five") == "order number, 105"
+    assert apply_corrections("ticket number two three four") == (
+        "ticket number 234"
+    )
+    assert apply_corrections("tracking number one two three") == (
+        "tracking number 123"
+    )
 
 
 def test_digit_sequences_do_not_normalize_without_context():
     assert apply_corrections("one two three four") == "one two three four"
     assert apply_corrections("one more thing") == "one more thing"
+    assert apply_corrections("number two three combo") == "number two three combo"
+    assert apply_corrections("we ranked number two three four") == (
+        "we ranked number two three four"
+    )
 
 
 def test_quantities_normalize_for_allowlisted_units():
@@ -17,8 +27,27 @@ def test_quantities_normalize_for_allowlisted_units():
     assert apply_corrections("six files") == "6 files"
     assert apply_corrections("three gigabytes") == "3 gigabytes"
     assert apply_corrections("one hundred twenty five dollars") == "125 dollars"
+    assert apply_corrections("two thousand dollars") == "2000 dollars"
     assert apply_corrections("two point five percent") == "2.5 percent"
     assert apply_corrections("one point five gigabytes") == "1.5 gigabytes"
+
+
+def test_quantities_do_not_strand_articles_before_magnitudes():
+    assert apply_corrections("a hundred dollars") == "a hundred dollars"
+    assert apply_corrections("a thousand dollars") == "a thousand dollars"
+    assert apply_corrections("a million dollars") == "a million dollars"
+    assert apply_corrections("a hundred twenty five dollars") == (
+        "a hundred twenty five dollars"
+    )
+    assert apply_corrections("a hundred and twenty dollars") == (
+        "a hundred and twenty dollars"
+    )
+    assert apply_corrections("a few hundred megabytes") == (
+        "a few hundred megabytes"
+    )
+    assert apply_corrections("a hundred reasons cost twenty dollars") == (
+        "a hundred reasons cost 20 dollars"
+    )
 
 
 def test_ambiguous_prose_stays_unchanged():
@@ -52,6 +81,7 @@ def test_month_dates_require_capitalized_months():
 def test_times_normalize_with_clear_context():
     assert apply_corrections("at three thirty PM") == "at 3:30 PM"
     assert apply_corrections("meeting at nine fifteen") == "meeting at 9:15"
+    assert apply_corrections("tomorrow at five ten") == "tomorrow at 5:10"
     assert apply_corrections("at three oh five PM") == "at 3:05 PM"
 
 
@@ -66,6 +96,15 @@ def test_times_do_not_normalize_without_clear_context():
     )
     assert apply_corrections("after one thirty of them left") == (
         "after one thirty of them left"
+    )
+    assert apply_corrections("look at three thirty page documents") == (
+        "look at three thirty page documents"
+    )
+    assert apply_corrections("staring at twelve fifteen year olds") == (
+        "staring at twelve fifteen year olds"
+    )
+    assert apply_corrections("at five ten the deal closed") == (
+        "at five ten the deal closed"
     )
 
 
