@@ -30,6 +30,7 @@ def test_quantities_normalize_for_allowlisted_units():
     assert apply_corrections("two thousand dollars") == "2000 dollars"
     assert apply_corrections("two point five percent") == "2.5 percent"
     assert apply_corrections("one point five gigabytes") == "1.5 gigabytes"
+    assert apply_corrections("one thing. ten files") == "one thing. 10 files"
 
 
 def test_quantities_do_not_strand_articles_before_magnitudes():
@@ -50,6 +51,22 @@ def test_quantities_do_not_strand_articles_before_magnitudes():
     )
 
 
+def test_quantities_do_not_convert_tails_of_larger_number_phrases():
+    assert apply_corrections("we need five to ten files") == (
+        "we need five to ten files"
+    )
+    assert apply_corrections("between two and three gigabytes") == (
+        "between two and three gigabytes"
+    )
+    assert apply_corrections("save four or five files") == (
+        "save four or five files"
+    )
+    assert apply_corrections("nineteen ninety nine dollars") == (
+        "nineteen ninety nine dollars"
+    )
+    assert apply_corrections("one oh one dollars") == "one oh one dollars"
+
+
 def test_ambiguous_prose_stays_unchanged():
     assert apply_corrections("wait a second") == "wait a second"
     assert apply_corrections("first we need to") == "first we need to"
@@ -65,6 +82,7 @@ def test_month_dates_normalize_ordinals():
     assert apply_corrections("May first") == "May 1st"
     assert apply_corrections("June first.") == "June 1st."
     assert apply_corrections("today is first May") == "today is 1st May"
+    assert apply_corrections("first May, we launch") == "1st May, we launch"
     assert apply_corrections("today is twenty eighth May") == "today is 28th May"
 
 
@@ -75,6 +93,18 @@ def test_month_dates_require_capitalized_months():
     assert apply_corrections("I may second guess that") == "I may second guess that"
     assert apply_corrections("in march third quarter results") == (
         "in march third quarter results"
+    )
+
+
+def test_ordinal_month_dates_do_not_rewrite_adjective_phrases():
+    assert apply_corrections("our first March meeting went well") == (
+        "our first March meeting went well"
+    )
+    assert apply_corrections("the first January snowfall was heavy") == (
+        "the first January snowfall was heavy"
+    )
+    assert apply_corrections("this is the second August in a row") == (
+        "this is the second August in a row"
     )
 
 

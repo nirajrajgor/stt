@@ -32,6 +32,32 @@ DIGITS = {
     "eight": "8",
     "nine": "9",
 }
+NUMBER_WORDS = set(DIGITS) | {
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+    "twenty",
+    "thirty",
+    "forty",
+    "fifty",
+    "sixty",
+    "seventy",
+    "eighty",
+    "ninety",
+    "hundred",
+    "thousand",
+    "million",
+    "billion",
+    "trillion",
+}
+NUMBER_TAIL_CONNECTORS = {"and", "or", "to"}
 
 MONTHS = {
     "january",
@@ -189,6 +215,8 @@ def _add_date_replacements(text, tokens, replacements):
             continue
         if not _is_phrase_separator(text, tokens[end_index - 1], tokens[end_index]):
             continue
+        if not _month_ends_date_phrase(text, tokens, end_index):
+            continue
         if 1 <= value <= 31:
             _add_replacement(
                 replacements,
@@ -200,6 +228,14 @@ def _add_date_replacements(text, tokens, replacements):
 
 def _is_month_token(token):
     return token.lower in MONTHS and token.text[:1].isupper()
+
+
+def _month_ends_date_phrase(text, tokens, month_index):
+    month = tokens[month_index]
+    if month_index + 1 >= len(tokens):
+        return True
+    next_token = tokens[month_index + 1]
+    return bool(re.fullmatch(r"\s*[,.;:!?]+\s*", text[month.end : next_token.start]))
 
 
 def _parse_ordinal_phrase(text, tokens, index):
@@ -371,6 +407,8 @@ def _add_quantity_replacements(text, tokens, replacements):
 def _parse_quantity_phrase(text, tokens, index):
     if _looks_like_ungated_time_tail(text, tokens, index):
         return None
+    if _looks_like_number_phrase_tail(text, tokens, index):
+        return None
     if _has_blocked_bare_magnitude_prefix(tokens, index):
         return None
 
@@ -388,6 +426,29 @@ def _parse_quantity_phrase(text, tokens, index):
         if normalized is not None:
             return unit_index, normalized
     return None
+
+
+def _looks_like_number_phrase_tail(text, tokens, index):
+    if tokens[index].lower not in NUMBER_WORDS:
+        return False
+    if index == 0:
+        return False
+
+    previous = tokens[index - 1]
+    if previous.lower in NUMBER_WORDS and _is_phrase_separator(
+        text, previous, tokens[index]
+    ):
+        return True
+
+    if index < 2 or previous.lower not in NUMBER_TAIL_CONNECTORS:
+        return False
+
+    before_previous = tokens[index - 2]
+    return (
+        before_previous.lower in NUMBER_WORDS
+        and _is_phrase_separator(text, before_previous, previous)
+        and _is_phrase_separator(text, previous, tokens[index])
+    )
 
 
 def _blocked_quantity_skip_end(text, tokens, index):
