@@ -16,6 +16,9 @@ def test_quantities_normalize_for_allowlisted_units():
     assert apply_corrections("twenty five dollars") == "25 dollars"
     assert apply_corrections("six files") == "6 files"
     assert apply_corrections("three gigabytes") == "3 gigabytes"
+    assert apply_corrections("one hundred twenty five dollars") == "125 dollars"
+    assert apply_corrections("two point five percent") == "2.5 percent"
+    assert apply_corrections("one point five gigabytes") == "1.5 gigabytes"
 
 
 def test_ambiguous_prose_stays_unchanged():
@@ -29,9 +32,11 @@ def test_ambiguous_prose_stays_unchanged():
 
 def test_month_dates_normalize_ordinals():
     assert apply_corrections("July twenty eighth") == "July 28th"
+    assert apply_corrections("July thirty first") == "July 31st"
     assert apply_corrections("May first") == "May 1st"
     assert apply_corrections("June first.") == "June 1st."
     assert apply_corrections("today is first May") == "today is 1st May"
+    assert apply_corrections("today is twenty eighth May") == "today is 28th May"
 
 
 def test_month_dates_require_capitalized_months():
