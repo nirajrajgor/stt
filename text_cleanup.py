@@ -2,6 +2,8 @@
 
 import re
 
+from number_normalization import normalize_numbers
+
 # Word-for-word transcription fixes (case-insensitive, word-boundary match).
 WORD_CORRECTIONS = {
     "npxcc usage": "npx ccusage",
@@ -97,6 +99,7 @@ def apply_corrections(text):
             flags=re.IGNORECASE,
         )
     text = remove_fillers(text)
+    text = normalize_numbers(text)
     # Parakeet tacks a sentence-end "." on silence. When the last token is a
     # filename/URL ("...md.", "...tsx.", "...com."), drop that trailing dot.
     # Gated on an extension-like prefix so prose sentences keep their period.
