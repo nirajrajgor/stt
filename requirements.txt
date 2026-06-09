@@ -68,6 +68,7 @@ standard-aifc==3.13.0
 standard-chunk==3.13.0
 standard-sunau==3.13.0
 threadpoolctl==3.6.0
+text2num==3.0.2
 tokenizers==0.22.2
 tqdm==4.67.3
 transformers==5.6.0
