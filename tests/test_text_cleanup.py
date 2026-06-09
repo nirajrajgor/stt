@@ -86,6 +86,17 @@ def test_month_dates_normalize_ordinals():
     assert apply_corrections("today is twenty eighth May") == "today is 28th May"
 
 
+def test_month_dates_normalize_years():
+    assert apply_corrections("June twenty twenty six") == "June 2026"
+    assert apply_corrections("June eighth twenty twenty six") == "June 8th 2026"
+    assert apply_corrections("June eighth two thousand twenty six") == (
+        "June 8th 2026"
+    )
+    assert apply_corrections("today is eighth June twenty twenty six") == (
+        "today is 8th June 2026"
+    )
+
+
 def test_month_dates_require_capitalized_months():
     assert apply_corrections("we may first need to refactor") == (
         "we may first need to refactor"
@@ -136,6 +147,18 @@ def test_times_do_not_normalize_without_clear_context():
     assert apply_corrections("at five ten the deal closed") == (
         "at five ten the deal closed"
     )
+
+
+def test_overlapping_number_false_positives_stay_literal():
+    assert apply_corrections("three thirty files") == "three thirty files"
+    assert apply_corrections("it grew by ten fifteen percent") == (
+        "it grew by ten fifteen percent"
+    )
+    assert apply_corrections("one oh one dollars") == "one oh one dollars"
+    assert apply_corrections("we need five to ten files") == (
+        "we need five to ten files"
+    )
+    assert apply_corrections("a hundred dollars") == "a hundred dollars"
 
 
 def test_number_normalization_runs_after_existing_cleanup():

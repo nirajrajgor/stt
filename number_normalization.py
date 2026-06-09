@@ -14,9 +14,25 @@ class WordToken:
     end: int
 
 
+@dataclass(frozen=True)
+class ReplacementCandidate:
+    kind: str
+    start: int
+    end: int
+    replacement: str
+
+
 _WORD_RE = re.compile(r"[A-Za-z]+")
 _NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
 _ORDINAL_RE = re.compile(r"(\d+)(st|nd|rd|th)")
+
+REPLACEMENT_PRIORITIES = {
+    # Higher priority candidates win when two suggested rewrites overlap.
+    "date": 40,
+    "time": 30,
+    "digit_sequence": 20,
+    "quantity": 10,
+}
 
 DIGITS = {
     "zero": "0",
@@ -150,13 +166,14 @@ AM_PM = {"am", "pm"}
 
 def normalize_numbers(text):
     tokens = _word_tokens(text)
-    replacements = []
+    candidates = []
 
-    _add_date_replacements(text, tokens, replacements)
-    _add_time_replacements(text, tokens, replacements)
-    _add_digit_sequence_replacements(text, tokens, replacements)
-    _add_quantity_replacements(text, tokens, replacements)
+    _add_date_replacements(text, tokens, candidates)
+    _add_time_replacements(text, tokens, candidates)
+    _add_digit_sequence_replacements(text, tokens, candidates)
+    _add_quantity_replacements(text, tokens, candidates)
 
+    replacements = _resolve_replacement_candidates(candidates)
     return _apply_replacements(text, replacements)
 
 
@@ -191,20 +208,47 @@ def _ordinal_suffix(value):
     return f"{value}{suffix}"
 
 
-def _add_date_replacements(text, tokens, replacements):
+def _add_date_replacements(text, tokens, candidates):
     for index, token in enumerate(tokens[:-1]):
         if not _is_month_token(token):
             continue
         if not _is_phrase_separator(text, token, tokens[index + 1]):
             continue
         ordinal = _parse_ordinal_phrase(text, tokens, index + 1)
-        if not ordinal:
+        if ordinal:
+            value, end_index = ordinal
+            if 1 <= value <= 31:
+                year = _parse_year_phrase(text, tokens, end_index)
+                if year:
+                    year_value, year_end_index = year
+                    _add_replacement(
+                        candidates,
+                        "date",
+                        tokens[index + 1].start,
+                        tokens[year_end_index - 1].end,
+                        f"{_ordinal_suffix(value)} {year_value}",
+                    )
+                start = tokens[index + 1].start
+                end = tokens[end_index - 1].end
+                _add_replacement(
+                    candidates,
+                    "date",
+                    start,
+                    end,
+                    _ordinal_suffix(value),
+                )
             continue
-        value, end_index = ordinal
-        if 1 <= value <= 31:
-            start = tokens[index + 1].start
-            end = tokens[end_index - 1].end
-            _add_replacement(replacements, start, end, _ordinal_suffix(value))
+
+        year = _parse_year_phrase(text, tokens, index + 1)
+        if year:
+            year_value, end_index = year
+            _add_replacement(
+                candidates,
+                "date",
+                tokens[index + 1].start,
+                tokens[end_index - 1].end,
+                str(year_value),
+            )
 
     for index in range(len(tokens)):
         ordinal = _parse_ordinal_phrase(text, tokens, index)
@@ -215,11 +259,25 @@ def _add_date_replacements(text, tokens, replacements):
             continue
         if not _is_phrase_separator(text, tokens[end_index - 1], tokens[end_index]):
             continue
-        if not _month_ends_date_phrase(text, tokens, end_index):
+        year = _parse_year_phrase(text, tokens, end_index + 1)
+        if not year and not _month_ends_date_phrase(text, tokens, end_index):
             continue
         if 1 <= value <= 31:
+            if year:
+                year_value, year_end_index = year
+                _add_replacement(
+                    candidates,
+                    "date",
+                    tokens[index].start,
+                    tokens[year_end_index - 1].end,
+                    (
+                        f"{_ordinal_suffix(value)} "
+                        f"{tokens[end_index].text} {year_value}"
+                    ),
+                )
             _add_replacement(
-                replacements,
+                candidates,
+                "date",
                 tokens[index].start,
                 tokens[end_index - 1].end,
                 _ordinal_suffix(value),
@@ -251,7 +309,55 @@ def _parse_ordinal_phrase(text, tokens, index):
     return None
 
 
-def _add_time_replacements(text, tokens, replacements):
+def _parse_year_phrase(text, tokens, index):
+    if index >= len(tokens):
+        return None
+
+    max_end = min(len(tokens), index + 4)
+    for end_index in range(max_end, index, -1):
+        phrase = _token_phrase(text, tokens, index, end_index)
+        if phrase is None:
+            continue
+
+        normalized = _normalize_number_phrase(phrase)
+        if normalized is not None and "." not in normalized:
+            value = int(normalized)
+            if 1900 <= value <= 2099:
+                return value, end_index
+
+        split_year = _parse_split_year_phrase(text, tokens, index, end_index)
+        if split_year is not None:
+            return split_year, end_index
+    return None
+
+
+def _parse_split_year_phrase(text, tokens, start_index, end_index):
+    for split_index in range(start_index + 1, end_index):
+        century = _parse_fixed_number_phrase(text, tokens, start_index, split_index)
+        if century not in {19, 20}:
+            continue
+
+        year_tail = _parse_fixed_number_phrase(text, tokens, split_index, end_index)
+        if year_tail is None or not 0 <= year_tail <= 99:
+            continue
+        if year_tail < 10 and tokens[split_index].lower not in {"oh", "o", "zero"}:
+            continue
+
+        return century * 100 + year_tail
+    return None
+
+
+def _parse_fixed_number_phrase(text, tokens, start_index, end_index):
+    phrase = _token_phrase(text, tokens, start_index, end_index)
+    if phrase is None:
+        return None
+    normalized = _normalize_number_phrase(phrase)
+    if normalized is None or "." in normalized:
+        return None
+    return int(normalized)
+
+
+def _add_time_replacements(text, tokens, candidates):
     for index in range(len(tokens) - 1):
         hour = _parse_time_hour(text, tokens, index)
         if hour is None:
@@ -272,7 +378,8 @@ def _add_time_replacements(text, tokens, replacements):
 
         replacement = f"{hour}:{minute_value:02d}"
         _add_replacement(
-            replacements,
+            candidates,
+            "time",
             tokens[index].start,
             tokens[end_index - 1].end,
             replacement,
@@ -327,7 +434,7 @@ def _has_bare_time_context(tokens, start_index):
     return lead in TIME_LEAD_CONTEXTS or lead in WEEKDAYS
 
 
-def _add_digit_sequence_replacements(text, tokens, replacements):
+def _add_digit_sequence_replacements(text, tokens, candidates):
     index = 0
     while index < len(tokens):
         if not _has_digit_context(text, tokens, index):
@@ -349,7 +456,8 @@ def _add_digit_sequence_replacements(text, tokens, replacements):
 
         if len(digits) >= 2:
             _add_replacement(
-                replacements,
+                candidates,
+                "digit_sequence",
                 tokens[index].start,
                 tokens[end_index - 1].end,
                 "".join(digits),
@@ -381,7 +489,7 @@ def _has_identifier_number_context(text, tokens, number_index):
     )
 
 
-def _add_quantity_replacements(text, tokens, replacements):
+def _add_quantity_replacements(text, tokens, candidates):
     index = 0
     while index < len(tokens) - 1:
         skip_end = _blocked_quantity_skip_end(text, tokens, index)
@@ -396,7 +504,8 @@ def _add_quantity_replacements(text, tokens, replacements):
 
         end_index, normalized = replacement
         _add_replacement(
-            replacements,
+            candidates,
+            "quantity",
             tokens[index].start,
             tokens[end_index - 1].end,
             normalized,
@@ -521,12 +630,24 @@ def _token_phrase(text, tokens, start_index, end_index):
     return text[tokens[start_index].start : tokens[end_index - 1].end]
 
 
-def _add_replacement(replacements, start, end, replacement):
-    if any(
-        start < old_end and end > old_start for old_start, old_end, _ in replacements
-    ):
-        return
-    replacements.append((start, end, replacement))
+def _add_replacement(candidates, kind, start, end, replacement):
+    candidates.append(ReplacementCandidate(kind, start, end, replacement))
+
+
+def _resolve_replacement_candidates(candidates):
+    replacements = []
+    ordered_candidates = sorted(
+        enumerate(candidates),
+        key=lambda item: (-REPLACEMENT_PRIORITIES[item[1].kind], item[0]),
+    )
+    for _, candidate in ordered_candidates:
+        if any(
+            candidate.start < old_end and candidate.end > old_start
+            for old_start, old_end, _ in replacements
+        ):
+            continue
+        replacements.append((candidate.start, candidate.end, candidate.replacement))
+    return replacements
 
 
 def _apply_replacements(text, replacements):
