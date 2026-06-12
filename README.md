@@ -86,10 +86,7 @@ In the `[settings]` section (all keys optional):
 - `sounds = true|false` — play a sound when transcribed text is pasted; default: `true`. (Replaces the removed `STT_SOUNDS` env var.)
 - `utterance_gap = <seconds>` — pause length for voice-command boundaries, above 0 up to 10; default: `0.7`. (Replaces the removed `STT_UTTERANCE_GAP` env var.)
 - `denoise = "auto"|"on"|"off"` — noise reduction; `"auto"` detects noisy clips; default: `"auto"`. (Replaces the removed `STT_DENOISE` env var; `0`/`1` are now `"off"`/`"on"`.)
-
-Configure the remaining runtime behavior with environment variables:
-
-- `STT_INPUT_DEVICE=<index|name> ./stt.py` — choose input device by index or name; default: macOS default input.
+- `input_device = <index or "name">` — input device by index or name substring; omit for the macOS default input. (Replaces the removed `STT_INPUT_DEVICE` env var.)
 
 List available devices:
 

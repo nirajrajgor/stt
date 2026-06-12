@@ -22,10 +22,13 @@ if os.path.exists(VENV_PYTHON) and os.path.abspath(sys.executable) != VENV_PYTHO
     os.execv(VENV_PYTHON, [VENV_PYTHON, os.path.abspath(__file__), *sys.argv[1:]])
 
 RECORDER_CHILD_ARG = "--record-child"
+# Internal parent-to-child handoff of the configured input_device; the child
+# must not parse the config file itself (it runs before the heavy imports).
+RECORDER_DEVICE_ENV = "STT_RECORDER_INPUT_DEVICE"
 
 
 def _record_child_resolve_input_device(sd):
-    override = os.environ.get("STT_INPUT_DEVICE")
+    override = os.environ.get(RECORDER_DEVICE_ENV)
     if override:
         try:
             return int(override)
@@ -39,7 +42,7 @@ def _record_child_resolve_input_device(sd):
                     {
                         "event": "warning",
                         "message": (
-                            f"STT_INPUT_DEVICE='{override}' not found; "
+                            f"input_device '{override}' not found; "
                             "falling back to system default."
                         ),
                     }
@@ -180,6 +183,7 @@ _RETIRED_ENV_VARS = {
     "STT_SOUNDS": "sounds",
     "STT_UTTERANCE_GAP": "utterance_gap",
     "STT_DENOISE": "denoise",
+    "STT_INPUT_DEVICE": "input_device",
 }
 
 
@@ -503,6 +507,11 @@ def _start_recorder_process():
     out_path = out.name
     out.close()
 
+    child_env = os.environ.copy()
+    child_env.pop(RECORDER_DEVICE_ENV, None)
+    if _SETTINGS.input_device is not None:
+        child_env[RECORDER_DEVICE_ENV] = str(_SETTINGS.input_device)
+
     proc = subprocess.Popen(
         [sys.executable, os.path.abspath(__file__), RECORDER_CHILD_ARG, out_path],
         stdin=subprocess.PIPE,
@@ -510,6 +519,7 @@ def _start_recorder_process():
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
+        env=child_env,
     )
     lines = []
     deadline = time.monotonic() + RECORDER_READY_TIMEOUT

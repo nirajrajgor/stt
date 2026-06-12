@@ -163,6 +163,40 @@ def test_denoise_rejects_unknown_values(tmp_path, raw):
         config.load_settings(path)
 
 
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("0", 0),
+        ("2", 2),
+        ('"MacBook Air Microphone"', "MacBook Air Microphone"),
+        ('" MacBook Air Microphone "', "MacBook Air Microphone"),
+    ],
+)
+def test_input_device_accepts_index_or_name(tmp_path, raw, expected):
+    path = tmp_path / "stt.config.toml"
+    path.write_text(f"[settings]\ninput_device = {raw}\n", encoding="utf-8")
+
+    assert config.load_settings(path).input_device == expected
+
+
+def test_input_device_defaults_to_none_when_missing(tmp_path):
+    path = tmp_path / "stt.config.toml"
+    path.write_text("[settings]\n", encoding="utf-8")
+
+    assert config.load_settings(path).input_device is None
+
+
+@pytest.mark.parametrize("raw", ["-1", "true", "1.5", '""', '"  "'])
+def test_input_device_rejects_invalid_values(tmp_path, raw):
+    path = tmp_path / "stt.config.toml"
+    path.write_text(f"[settings]\ninput_device = {raw}\n", encoding="utf-8")
+
+    with pytest.raises(
+        config.ConfigError, match="must be a device index"
+    ):
+        config.load_settings(path)
+
+
 def test_default_config_parses_with_default_settings(tmp_path):
     path = tmp_path / "stt.config.toml"
 

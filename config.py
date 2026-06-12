@@ -42,13 +42,15 @@ class Settings:
     sounds: bool = True
     utterance_gap: float = 0.7
     denoise: str = "auto"
+    # Device index (int), name substring (str), or None for system default.
+    input_device: int | str | None = None
 
 
 DENOISE_CHOICES = ("auto", "on", "off")
 
 # Keys allowed in [settings]; anything else is rejected so typos fail
 # loudly instead of silently using defaults.
-_KNOWN_SETTINGS = frozenset({"sounds", "utterance_gap", "denoise"})
+_KNOWN_SETTINGS = frozenset({"sounds", "utterance_gap", "denoise", "input_device"})
 
 
 def ensure_config_exists(config_path=CONFIG_PATH):
@@ -102,6 +104,10 @@ def parse_settings(data, config_path=CONFIG_PATH):
         kwargs["denoise"] = _choice_setting(
             section, "denoise", path, DENOISE_CHOICES
         )
+    if "input_device" in section:
+        kwargs["input_device"] = _input_device_setting(
+            section, "input_device", path
+        )
     return Settings(**kwargs)
 
 
@@ -122,6 +128,20 @@ def _choice_setting(section, key, path, choices):
             f'"{key}" in [settings] of {path.name} must be one of: {quoted}.'
         )
     return value
+
+
+def _input_device_setting(section, key, path):
+    value = section[key]
+    if isinstance(value, bool) or not isinstance(value, (int, str)) or (
+        isinstance(value, int) and value < 0
+    ) or (isinstance(value, str) and not value.strip()):
+        raise ConfigError(
+            f'"{key}" in [settings] of {path.name} must be a device index '
+            "(whole number >= 0) or a device name string."
+        )
+    # Strip name padding: the child's substring match would silently miss
+    # otherwise and fall back to the default device.
+    return value.strip() if isinstance(value, str) else value
 
 
 def _positive_number_setting(section, key, path, max_value):
