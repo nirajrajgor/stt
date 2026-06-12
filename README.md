@@ -100,8 +100,11 @@ Common transcription fixes live in `text_cleanup.py`. Filler-word cleanup is alw
 
 ```bash
 venv/bin/python -m pip install -r requirements-dev.txt
-venv/bin/python -m pytest
+venv/bin/python -m pytest          # fast suite, runs anywhere
+venv/bin/python -m pytest -m e2e   # real model inference
 ```
+
+The `e2e` tier loads the native MLX runtime and the Parakeet model, so it only runs on Apple Silicon Macs with Metal access (same requirement as the app itself); elsewhere MLX aborts the process at import. The fast suite has no such dependency and is the tier to run in CI or sandboxes.
 
 ## Troubleshooting
 

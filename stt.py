@@ -14,42 +14,15 @@ import threading
 import tempfile
 import time
 import traceback
-from pathlib import Path
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 VENV_PYTHON = os.path.join(SCRIPT_DIR, "venv", "bin", "python")
 if os.path.exists(VENV_PYTHON) and os.path.abspath(sys.executable) != VENV_PYTHON:
     os.execv(VENV_PYTHON, [VENV_PYTHON, os.path.abspath(__file__), *sys.argv[1:]])
 
+import recorder
+
 RECORDER_CHILD_ARG = "--record-child"
-# Internal parent-to-child handoff of the configured input_device; the child
-# must not parse the config file itself (it runs before the heavy imports).
-RECORDER_DEVICE_ENV = "STT_RECORDER_INPUT_DEVICE"
-
-
-def _record_child_resolve_input_device(sd):
-    override = os.environ.get(RECORDER_DEVICE_ENV)
-    if override:
-        try:
-            return int(override)
-        except ValueError:
-            needle = override.lower()
-            for idx, dev in enumerate(sd.query_devices()):
-                if dev["max_input_channels"] > 0 and needle in dev["name"].lower():
-                    return idx
-            print(
-                json.dumps(
-                    {
-                        "event": "warning",
-                        "message": (
-                            f"input_device '{override}' not found; "
-                            "falling back to system default."
-                        ),
-                    }
-                ),
-                flush=True,
-            )
-    return None
 
 
 def _record_child_main():
@@ -88,7 +61,14 @@ def _record_child_main():
                 print(json.dumps({"event": "amplitude", "level": level}), flush=True)
                 time.sleep(1.0 / 30.0)
 
-        device = _record_child_resolve_input_device(child_sd)
+        device, device_warning = recorder.resolve_input_device(
+            child_sd, os.environ.get(recorder.RECORDER_DEVICE_ENV)
+        )
+        if device_warning:
+            print(
+                json.dumps({"event": "warning", "message": device_warning}),
+                flush=True,
+            )
         dev_info = child_sd.query_devices(device, "input")
         strm = child_sd.InputStream(
             samplerate=sample_rate, channels=1, callback=callback, device=device
@@ -150,20 +130,13 @@ if RECORDER_CHILD_ARG in sys.argv:
 import Foundation
 import objc
 from AppKit import NSPasteboardTypeString, NSWorkspace
-from huggingface_hub import hf_hub_download
-
-import mlx.core as mx
-import noisereduce as nr
 import numpy as np
-from parakeet_mlx import DecodingConfig, SentenceConfig, from_pretrained
-from parakeet_mlx.audio import get_logmel
 from pynput import keyboard
 
 import config
 import hotkeys
 import overlay
-from text_cleanup import apply_corrections
-from voice_commands import apply_voice_commands
+from transcriber import SAMPLE_RATE, Transcriber
 
 NSUserNotification = objc.lookUpClass("NSUserNotification")
 NSUserNotificationCenter = objc.lookUpClass("NSUserNotificationCenter")
@@ -174,7 +147,6 @@ NSPasteboard = objc.lookUpClass("NSPasteboard")
 # WHISPER_CLI = "whisper-cli"
 # MODEL_PATH = "/opt/homebrew/Cellar/whisper-cpp/1.8.4/share/whisper-cpp/ggml-medium.bin"
 
-SAMPLE_RATE = 16000
 TRANSCRIPTIONS_FILE = os.path.join(SCRIPT_DIR, "transcriptions.md")
 LOG_FILE = os.path.join(SCRIPT_DIR, "stt.log")
 
@@ -201,9 +173,8 @@ def _load_settings():
         print(exc, file=sys.stderr)
         print("Using default settings.", file=sys.stderr)
         return config.Settings()
-# RMS of the quietest 10% of 20 ms frames. Tuned against a MacBook Air built-in
-# mic — clean speech sits around 0.003–0.008; music bleed pushes it above ~0.02.
-NOISE_FLOOR_THRESHOLD = 0.015
+
+
 # Ignore hold durations shorter than this — almost always an accidental tap.
 MIN_HOLD_SECONDS = 0.25
 # Safety cap for push-to-talk: if macOS drops the key-release event (screen
@@ -279,15 +250,8 @@ _log_fh = _setup_logging()
 _SETTINGS = _load_settings()
 # Audio cue on paste complete. Set sounds = false in [settings] to disable.
 SOUNDS_ENABLED = _SETTINGS.sounds
-# Silence gap (seconds) that separates pause-bounded utterances. Used by
-# Parakeet's sentence segmentation so voice commands like "scratch that" can
-# match a whole utterance flanked by pauses.
-UTTERANCE_GAP = _SETTINGS.utterance_gap
-# Spectral-gating noise reduction before transcribe.
-#   "auto" (default): fire only when the clip's noise floor looks elevated
-#     (music/ambient bleed). Clean rooms keep plosive fidelity.
-#   "on": always. "off": never.
-_DENOISE_MODE = _SETTINGS.denoise
+# Owns the model plus the settings-derived utterance_gap and denoise behavior.
+_TRANSCRIBER = Transcriber(_SETTINGS)
 
 
 def _load_hotkey_bindings():
@@ -353,79 +317,6 @@ def notify(title, message):
 #     )
 #     lines = [l.strip() for l in result.stdout.strip().splitlines() if l.strip()]
 #     return " ".join(lines)
-
-# --- Parakeet MLX ---
-PARAKEET_REPO = "mlx-community/parakeet-tdt-0.6b-v2"
-
-
-def _load_parakeet(repo):
-    # Load from the local cache to avoid a HF Hub revalidation request on every
-    # startup; only download if the cache is empty (first run).
-    try:
-        config = hf_hub_download(repo, "config.json", local_files_only=True)
-        return from_pretrained(str(Path(config).parent))
-    except Exception:
-        return from_pretrained(repo)
-
-
-parakeet_model = None
-
-
-def _load_model():
-    global parakeet_model
-    print("Loading Parakeet TDT 0.6B v2 model...")
-    parakeet_model = _load_parakeet(PARAKEET_REPO)
-    # Cap MLX's buffer cache so it reclaims instead of growing unboundedly with
-    # the longest transcription. 512 MB is plenty for intermediate tensors.
-    mx.set_cache_limit(512 * 1024 * 1024)
-    print("Model loaded.")
-
-_DECODING_CONFIG = DecodingConfig(sentence=SentenceConfig(silence_gap=UTTERANCE_GAP))
-
-
-def _noise_floor(audio):
-    """10th-percentile RMS across 20 ms frames — a cheap proxy for ambient noise."""
-    frame = int(SAMPLE_RATE * 0.02)
-    trimmed = audio[: len(audio) // frame * frame]
-    if len(trimmed) < frame:
-        return 0.0
-    frames = trimmed.reshape(-1, frame)
-    frame_rms = np.sqrt(np.mean(frames ** 2, axis=1))
-    return float(np.percentile(frame_rms, 10))
-
-
-def _should_denoise(noise_floor):
-    if _DENOISE_MODE == "off":
-        return False
-    if _DENOISE_MODE == "on":
-        return True
-    return noise_floor > NOISE_FLOOR_THRESHOLD
-
-
-def transcribe(audio_np):
-    """Transcribe a numpy audio array directly, bypassing file I/O + ffmpeg."""
-    try:
-        audio_flat = audio_np.flatten().astype(np.float32)
-        floor = _noise_floor(audio_flat)
-        if _should_denoise(floor):
-            # Non-stationary spectral gating so the noise profile tracks music
-            # that evolves over time rather than assuming a fixed hum.
-            print(f"🔇 Denoising (noise floor {floor:.4f})")
-            audio_flat = nr.reduce_noise(
-                y=audio_flat, sr=SAMPLE_RATE, stationary=False
-            )
-        audio_mx = mx.array(audio_flat)
-        mel = get_logmel(audio_mx, parakeet_model.preprocessor_config)
-        result = parakeet_model.generate(mel, decoding_config=_DECODING_CONFIG)[0]
-        raw = result.text.strip()
-        edited = apply_voice_commands(result.sentences)
-        return raw, apply_corrections(edited)
-    finally:
-        # parakeet_mlx's non-streaming transcribe() never clears MLX's buffer
-        # cache, so cached intermediates from the largest-ever audio clip pin
-        # GB of memory until process exit. Drop them between calls.
-        mx.clear_cache()
-
 
 def save_to_markdown(text, words, duration):
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -507,10 +398,7 @@ def _start_recorder_process():
     out_path = out.name
     out.close()
 
-    child_env = os.environ.copy()
-    child_env.pop(RECORDER_DEVICE_ENV, None)
-    if _SETTINGS.input_device is not None:
-        child_env[RECORDER_DEVICE_ENV] = str(_SETTINGS.input_device)
+    child_env = recorder.child_env(os.environ, _SETTINGS.input_device)
 
     proc = subprocess.Popen(
         [sys.executable, os.path.abspath(__file__), RECORDER_CHILD_ARG, out_path],
@@ -688,7 +576,7 @@ def _finish_recording(audio_data):
     print("⏳ Transcribing...")
 
     # Transcribe directly from memory — no temp file / ffmpeg round-trip.
-    raw_text, text = transcribe(audio_data)
+    raw_text, text = _TRANSCRIBER.transcribe(audio_data)
 
     if text:
         paste_text(text)
@@ -818,7 +706,7 @@ def main():
     if HOTKEY_BINDINGS is None:
         return 2
 
-    _load_model()
+    _TRANSCRIBER.load_model()
 
     print("=" * 40)
     print("  Speech-to-Text (Parakeet TDT)")
