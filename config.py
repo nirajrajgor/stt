@@ -5,6 +5,7 @@ the heavy third-party imports in stt.py are available.
 """
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
 import tomllib
 
@@ -21,6 +22,7 @@ DEFAULT_CONFIG = (
     "\n"
     "[settings]\n"
     "sounds = true\n"
+    "utterance_gap = 0.7\n"
 )
 
 
@@ -37,11 +39,12 @@ class Settings:
     """
 
     sounds: bool = True
+    utterance_gap: float = 0.7
 
 
 # Keys allowed in [settings]; anything else is rejected so typos fail
 # loudly instead of silently using defaults.
-_KNOWN_SETTINGS = frozenset({"sounds"})
+_KNOWN_SETTINGS = frozenset({"sounds", "utterance_gap"})
 
 
 def ensure_config_exists(config_path=CONFIG_PATH):
@@ -87,6 +90,10 @@ def parse_settings(data, config_path=CONFIG_PATH):
     kwargs = {}
     if "sounds" in section:
         kwargs["sounds"] = _bool_setting(section, "sounds", path)
+    if "utterance_gap" in section:
+        kwargs["utterance_gap"] = _positive_number_setting(
+            section, "utterance_gap", path, max_value=10
+        )
     return Settings(**kwargs)
 
 
@@ -97,3 +104,19 @@ def _bool_setting(section, key, path):
             f'"{key}" in [settings] of {path.name} must be true or false.'
         )
     return value
+
+
+def _positive_number_setting(section, key, path, max_value):
+    value = section[key]
+    # bool is an int subclass; true/false are not numbers here.
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or not 0 < value <= max_value
+    ):
+        raise ConfigError(
+            f'"{key}" in [settings] of {path.name} must be a number '
+            f"greater than 0 and at most {max_value}."
+        )
+    return float(value)

@@ -176,7 +176,10 @@ TRANSCRIPTIONS_FILE = os.path.join(SCRIPT_DIR, "transcriptions.md")
 LOG_FILE = os.path.join(SCRIPT_DIR, "stt.log")
 
 # Env vars that moved into [settings] of stt.config.toml and no longer work.
-_RETIRED_ENV_VARS = {"STT_SOUNDS": "sounds"}
+_RETIRED_ENV_VARS = {
+    "STT_SOUNDS": "sounds",
+    "STT_UTTERANCE_GAP": "utterance_gap",
+}
 
 
 def _load_settings():
@@ -207,11 +210,6 @@ MIN_HOLD_SECONDS = 0.25
 # Safety cap for push-to-talk: if macOS drops the key-release event (screen
 # lock, fullscreen VM, focus change), this prevents an unbounded recording.
 MAX_PTT_SECONDS = 360
-
-# Silence gap (seconds) that separates pause-bounded utterances. Used by
-# Parakeet's sentence segmentation so voice commands like "scratch that" can
-# match a whole utterance flanked by pauses.
-UTTERANCE_GAP = float(os.environ.get("STT_UTTERANCE_GAP", "0.7"))
 
 END_SOUND = "Pop"
 # Parent waits this long for the child process to either open the mic or fail.
@@ -282,6 +280,10 @@ _log_fh = _setup_logging()
 _SETTINGS = _load_settings()
 # Audio cue on paste complete. Set sounds = false in [settings] to disable.
 SOUNDS_ENABLED = _SETTINGS.sounds
+# Silence gap (seconds) that separates pause-bounded utterances. Used by
+# Parakeet's sentence segmentation so voice commands like "scratch that" can
+# match a whole utterance flanked by pauses.
+UTTERANCE_GAP = _SETTINGS.utterance_gap
 
 
 def _load_hotkey_bindings():

@@ -108,6 +108,35 @@ def test_sounds_rejects_non_boolean(tmp_path, value):
         config.load_settings(path)
 
 
+@pytest.mark.parametrize("raw, expected", [("0.5", 0.5), ("2", 2.0), ("10", 10.0)])
+def test_utterance_gap_accepts_positive_numbers(tmp_path, raw, expected):
+    path = tmp_path / "stt.config.toml"
+    path.write_text(f"[settings]\nutterance_gap = {raw}\n", encoding="utf-8")
+
+    gap = config.load_settings(path).utterance_gap
+
+    assert gap == expected
+    assert isinstance(gap, float)
+
+
+def test_utterance_gap_defaults_when_missing(tmp_path):
+    path = tmp_path / "stt.config.toml"
+    path.write_text("[settings]\n", encoding="utf-8")
+
+    assert config.load_settings(path).utterance_gap == 0.7
+
+
+@pytest.mark.parametrize("raw", ['"0.7"', "true", "0", "-1.5", "10.1", "nan", "inf", "-inf"])
+def test_utterance_gap_rejects_out_of_range_or_non_number(tmp_path, raw):
+    path = tmp_path / "stt.config.toml"
+    path.write_text(f"[settings]\nutterance_gap = {raw}\n", encoding="utf-8")
+
+    with pytest.raises(
+        config.ConfigError, match="must be a number greater than 0 and at most 10"
+    ):
+        config.load_settings(path)
+
+
 def test_default_config_parses_with_default_settings(tmp_path):
     path = tmp_path / "stt.config.toml"
 

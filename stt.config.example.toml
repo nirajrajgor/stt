@@ -23,3 +23,7 @@ toggle = "left_option+left_command"
 [settings]
 # Play a sound when transcribed text is pasted. true or false.
 sounds = true
+
+# Pause length in seconds that separates utterances, used for voice-command
+# boundaries like "scratch that". A number greater than 0, at most 10.
+utterance_gap = 0.7
