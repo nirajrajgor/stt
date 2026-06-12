@@ -156,6 +156,7 @@ from parakeet_mlx import DecodingConfig, SentenceConfig, from_pretrained
 from parakeet_mlx.audio import get_logmel
 from pynput import keyboard
 
+import config
 import hotkeys
 import overlay
 from text_cleanup import apply_corrections
@@ -264,7 +265,7 @@ _log_fh = _setup_logging()
 def _load_hotkey_bindings():
     try:
         return hotkeys.load_hotkey_bindings()
-    except hotkeys.HotkeyConfigError as exc:
+    except config.ConfigError as exc:
         print(exc, file=sys.stderr)
         return None
 

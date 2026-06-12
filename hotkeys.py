@@ -3,22 +3,18 @@
 from dataclasses import dataclass
 from pathlib import Path
 import string
-import tomllib
 
 from pynput import keyboard
 
-
-CONFIG_PATH = Path(__file__).with_name("stt.config.toml")
-EXAMPLE_CONFIG_PATH = Path(__file__).with_name("stt.config.example.toml")
-
-DEFAULT_PUSH_TO_TALK = "right_option"
-DEFAULT_TOGGLE = "left_option+left_command"
-MAX_TOGGLE_KEYS = 3
-DEFAULT_CONFIG = (
-    "[hotkeys]\n"
-    f'push_to_talk = "{DEFAULT_PUSH_TO_TALK}"\n'
-    f'toggle = "{DEFAULT_TOGGLE}"\n'
+from config import (
+    CONFIG_PATH,
+    EXAMPLE_CONFIG_PATH,
+    ConfigError,
+    load_config_data,
 )
+
+
+MAX_TOGGLE_KEYS = 3
 
 _SIDE_SPECIFIC_MODIFIERS = {
     "left_command": keyboard.Key.cmd_l,
@@ -69,7 +65,7 @@ _PTT_DISALLOWED = set(string.ascii_lowercase) | set(string.digits)
 _OPTION_KEYS = {"left_option", "right_option"}
 
 
-class HotkeyConfigError(ValueError):
+class HotkeyConfigError(ConfigError):
     """Raised when stt.config.toml contains invalid hotkey settings."""
 
 
@@ -145,30 +141,15 @@ def _reset_toggle_state_if_idle(pressed_keys, ptt_held, toggle_state):
     return toggle_state
 
 
-def ensure_config_exists(config_path=CONFIG_PATH):
-    path = Path(config_path)
-    if not path.exists():
-        try:
-            path.write_text(DEFAULT_CONFIG, encoding="utf-8")
-        except OSError as exc:
-            raise HotkeyConfigError(f"Could not create {path.name}: {exc}") from exc
-
-
 def load_hotkey_bindings(config_path=CONFIG_PATH, create_if_missing=True):
-    path = Path(config_path)
-    if create_if_missing:
-        ensure_config_exists(path)
+    """Parse the [hotkeys] section into HotkeyBindings.
 
-    try:
-        with path.open("rb") as fh:
-            data = tomllib.load(fh)
-    except tomllib.TOMLDecodeError as exc:
-        raise HotkeyConfigError(
-            f"Invalid TOML in {path.name}: {exc}\n"
-            f"See {EXAMPLE_CONFIG_PATH.name} for supported hotkeys."
-        ) from exc
-    except FileNotFoundError as exc:
-        raise HotkeyConfigError(f"Missing config file: {path}") from exc
+    Raises HotkeyConfigError for invalid hotkey settings, and its base
+    ConfigError for file-level failures (missing/unreadable/invalid TOML).
+    Catch ConfigError to handle both.
+    """
+    path = Path(config_path)
+    data = load_config_data(path, create_if_missing)
 
     hotkey_data = data.get("hotkeys")
     if not isinstance(hotkey_data, dict):
