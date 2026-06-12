@@ -131,3 +131,11 @@ def test_example_config_parses_without_creating():
     )
 
     assert "hotkeys" in data
+
+
+def test_example_config_settings_are_valid():
+    settings = config.load_settings(
+        config.EXAMPLE_CONFIG_PATH, create_if_missing=False
+    )
+
+    assert settings == config.Settings()

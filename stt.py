@@ -193,9 +193,6 @@ def _load_settings():
         print(exc, file=sys.stderr)
         print("Using default settings.", file=sys.stderr)
         return config.Settings()
-
-
-_SETTINGS = _load_settings()
 # Spectral-gating noise reduction before transcribe.
 #   STT_DENOISE=auto (default): fire only when the clip's noise floor looks
 #     elevated (music/ambient bleed). Clean rooms keep plosive fidelity.
@@ -216,8 +213,6 @@ MAX_PTT_SECONDS = 360
 # match a whole utterance flanked by pauses.
 UTTERANCE_GAP = float(os.environ.get("STT_UTTERANCE_GAP", "0.7"))
 
-# Audio cue on paste complete. Set sounds = false in [settings] to disable.
-SOUNDS_ENABLED = _SETTINGS.sounds
 END_SOUND = "Pop"
 # Parent waits this long for the child process to either open the mic or fail.
 RECORDER_READY_TIMEOUT = float(os.environ.get("STT_RECORDER_READY_TIMEOUT", "3.0"))
@@ -282,6 +277,11 @@ def _setup_logging():
 
 
 _log_fh = _setup_logging()
+
+# After the log tee, so config errors and retired-env warnings reach stt.log.
+_SETTINGS = _load_settings()
+# Audio cue on paste complete. Set sounds = false in [settings] to disable.
+SOUNDS_ENABLED = _SETTINGS.sounds
 
 
 def _load_hotkey_bindings():
