@@ -23,6 +23,7 @@ DEFAULT_CONFIG = (
     "[settings]\n"
     "sounds = true\n"
     "utterance_gap = 0.7\n"
+    'denoise = "auto"\n'
 )
 
 
@@ -40,11 +41,14 @@ class Settings:
 
     sounds: bool = True
     utterance_gap: float = 0.7
+    denoise: str = "auto"
 
+
+DENOISE_CHOICES = ("auto", "on", "off")
 
 # Keys allowed in [settings]; anything else is rejected so typos fail
 # loudly instead of silently using defaults.
-_KNOWN_SETTINGS = frozenset({"sounds", "utterance_gap"})
+_KNOWN_SETTINGS = frozenset({"sounds", "utterance_gap", "denoise"})
 
 
 def ensure_config_exists(config_path=CONFIG_PATH):
@@ -94,6 +98,10 @@ def parse_settings(data, config_path=CONFIG_PATH):
         kwargs["utterance_gap"] = _positive_number_setting(
             section, "utterance_gap", path, max_value=10
         )
+    if "denoise" in section:
+        kwargs["denoise"] = _choice_setting(
+            section, "denoise", path, DENOISE_CHOICES
+        )
     return Settings(**kwargs)
 
 
@@ -102,6 +110,16 @@ def _bool_setting(section, key, path):
     if not isinstance(value, bool):
         raise ConfigError(
             f'"{key}" in [settings] of {path.name} must be true or false.'
+        )
+    return value
+
+
+def _choice_setting(section, key, path, choices):
+    value = section[key]
+    if value not in choices:
+        quoted = ", ".join(f'"{c}"' for c in choices)
+        raise ConfigError(
+            f'"{key}" in [settings] of {path.name} must be one of: {quoted}.'
         )
     return value
 

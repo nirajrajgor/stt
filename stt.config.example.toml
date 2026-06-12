@@ -27,3 +27,7 @@ sounds = true
 # Pause length in seconds that separates utterances, used for voice-command
 # boundaries like "scratch that". A number greater than 0, at most 10.
 utterance_gap = 0.7
+
+# Noise reduction before transcription. "auto" fires only on noisy clips,
+# "on" always, "off" never.
+denoise = "auto"

@@ -137,6 +137,32 @@ def test_utterance_gap_rejects_out_of_range_or_non_number(tmp_path, raw):
         config.load_settings(path)
 
 
+@pytest.mark.parametrize("value", ["auto", "on", "off"])
+def test_denoise_accepts_valid_choices(tmp_path, value):
+    path = tmp_path / "stt.config.toml"
+    path.write_text(f'[settings]\ndenoise = "{value}"\n', encoding="utf-8")
+
+    assert config.load_settings(path).denoise == value
+
+
+def test_denoise_defaults_to_auto_when_missing(tmp_path):
+    path = tmp_path / "stt.config.toml"
+    path.write_text("[settings]\n", encoding="utf-8")
+
+    assert config.load_settings(path).denoise == "auto"
+
+
+@pytest.mark.parametrize("raw", ['"Auto"', '"1"', "1", "true", '"of"'])
+def test_denoise_rejects_unknown_values(tmp_path, raw):
+    path = tmp_path / "stt.config.toml"
+    path.write_text(f"[settings]\ndenoise = {raw}\n", encoding="utf-8")
+
+    with pytest.raises(
+        config.ConfigError, match='must be one of: "auto", "on", "off"'
+    ):
+        config.load_settings(path)
+
+
 def test_default_config_parses_with_default_settings(tmp_path):
     path = tmp_path / "stt.config.toml"
 

@@ -179,6 +179,7 @@ LOG_FILE = os.path.join(SCRIPT_DIR, "stt.log")
 _RETIRED_ENV_VARS = {
     "STT_SOUNDS": "sounds",
     "STT_UTTERANCE_GAP": "utterance_gap",
+    "STT_DENOISE": "denoise",
 }
 
 
@@ -196,12 +197,6 @@ def _load_settings():
         print(exc, file=sys.stderr)
         print("Using default settings.", file=sys.stderr)
         return config.Settings()
-# Spectral-gating noise reduction before transcribe.
-#   STT_DENOISE=auto (default): fire only when the clip's noise floor looks
-#     elevated (music/ambient bleed). Clean rooms keep plosive fidelity.
-#   STT_DENOISE=1: always on.
-#   STT_DENOISE=0: always off.
-_DENOISE_MODE = os.environ.get("STT_DENOISE", "auto").lower()
 # RMS of the quietest 10% of 20 ms frames. Tuned against a MacBook Air built-in
 # mic — clean speech sits around 0.003–0.008; music bleed pushes it above ~0.02.
 NOISE_FLOOR_THRESHOLD = 0.015
@@ -284,6 +279,11 @@ SOUNDS_ENABLED = _SETTINGS.sounds
 # Parakeet's sentence segmentation so voice commands like "scratch that" can
 # match a whole utterance flanked by pauses.
 UTTERANCE_GAP = _SETTINGS.utterance_gap
+# Spectral-gating noise reduction before transcribe.
+#   "auto" (default): fire only when the clip's noise floor looks elevated
+#     (music/ambient bleed). Clean rooms keep plosive fidelity.
+#   "on": always. "off": never.
+_DENOISE_MODE = _SETTINGS.denoise
 
 
 def _load_hotkey_bindings():
@@ -391,9 +391,9 @@ def _noise_floor(audio):
 
 
 def _should_denoise(noise_floor):
-    if _DENOISE_MODE == "0":
+    if _DENOISE_MODE == "off":
         return False
-    if _DENOISE_MODE == "1":
+    if _DENOISE_MODE == "on":
         return True
     return noise_floor > NOISE_FLOOR_THRESHOLD
 
