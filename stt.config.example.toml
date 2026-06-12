@@ -34,6 +34,6 @@ denoise = "auto"
 
 # Microphone: a device index or a device name (substring, case-insensitive).
 # Omit the key entirely to use the macOS default input.
-# List devices: python3 -c "import sounddevice as sd; print(sd.query_devices())"
+# List devices: venv/bin/python -c "import sounddevice as sd; print(sd.query_devices())"
 # input_device = 1
 # input_device = "MacBook Air Microphone"

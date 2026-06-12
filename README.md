@@ -91,7 +91,7 @@ In the `[settings]` section (all keys optional):
 List available devices:
 
 ```bash
-python3 -c "import sounddevice as sd; print(sd.query_devices())"
+venv/bin/python -c "import sounddevice as sd; print(sd.query_devices())"
 ```
 
 Common transcription fixes live in `text_cleanup.py`. Filler-word cleanup is always on. The `wpm` and word count logged in `transcriptions.md` reflect what you actually spoke (fillers included) — only the saved text is cleaned.
@@ -112,3 +112,4 @@ The `e2e` tier loads the native MLX runtime and the Parakeet model, so it only r
 - **No audio captured / silent recordings** — the terminal app doesn't have microphone permission, _or_ Anaconda Python failed to trigger the TCC prompt. Grant permission manually in System Settings → Privacy & Security → Microphone, then fully quit and reopen the terminal.
 - **Hotkey does nothing** — the terminal app doesn't have Accessibility permission. Grant it in System Settings → Privacy & Security → Accessibility and fully restart the terminal.
 - **Transcribed text appears in the terminal instead of where you wanted** — the terminal was the focused window when you stopped recording. Click into your target app _before_ pressing the stop hotkey.
+- **`STT_*` environment variables have no effect** — they were replaced by the `[settings]` section in `stt.config.toml` (see Settings). The app prints a warning at startup naming the config key to use instead.
