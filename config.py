@@ -15,16 +15,6 @@ EXAMPLE_CONFIG_PATH = Path(__file__).with_name("stt.config.example.toml")
 
 DEFAULT_PUSH_TO_TALK = "right_option"
 DEFAULT_TOGGLE = "left_option+left_command"
-DEFAULT_CONFIG = (
-    "[hotkeys]\n"
-    f'push_to_talk = "{DEFAULT_PUSH_TO_TALK}"\n'
-    f'toggle = "{DEFAULT_TOGGLE}"\n'
-    "\n"
-    "[settings]\n"
-    "sounds = true\n"
-    "utterance_gap = 0.7\n"
-    'denoise = "auto"\n'
-)
 
 
 class ConfigError(ValueError):
@@ -44,6 +34,22 @@ class Settings:
     denoise: str = "auto"
     # Device index (int), name substring (str), or None for system default.
     input_device: int | str | None = None
+
+
+_DEFAULTS = Settings()
+# Written on first run. Settings values are interpolated so the generated
+# file cannot drift from the code defaults; input_device is omitted because
+# its default is "key absent" (system default input).
+DEFAULT_CONFIG = (
+    "[hotkeys]\n"
+    f'push_to_talk = "{DEFAULT_PUSH_TO_TALK}"\n'
+    f'toggle = "{DEFAULT_TOGGLE}"\n'
+    "\n"
+    "[settings]\n"
+    f"sounds = {'true' if _DEFAULTS.sounds else 'false'}\n"
+    f"utterance_gap = {_DEFAULTS.utterance_gap}\n"
+    f'denoise = "{_DEFAULTS.denoise}"\n'
+)
 
 
 DENOISE_CHOICES = ("auto", "on", "off")
