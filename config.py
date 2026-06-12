@@ -18,6 +18,9 @@ DEFAULT_CONFIG = (
     "[hotkeys]\n"
     f'push_to_talk = "{DEFAULT_PUSH_TO_TALK}"\n'
     f'toggle = "{DEFAULT_TOGGLE}"\n'
+    "\n"
+    "[settings]\n"
+    "sounds = true\n"
 )
 
 
@@ -30,12 +33,15 @@ class Settings:
     """Runtime settings from the optional [settings] section.
 
     Fields are added as the STT_* environment variables migrate here.
+    Defaults here are the single source of truth for missing keys.
     """
+
+    sounds: bool = True
 
 
 # Keys allowed in [settings]; anything else is rejected so typos fail
 # loudly instead of silently using defaults.
-_KNOWN_SETTINGS = frozenset()
+_KNOWN_SETTINGS = frozenset({"sounds"})
 
 
 def ensure_config_exists(config_path=CONFIG_PATH):
@@ -78,4 +84,16 @@ def parse_settings(data, config_path=CONFIG_PATH):
             f"Unknown key(s) in [settings] of {path.name}: {', '.join(unknown)}"
         )
 
-    return Settings()
+    kwargs = {}
+    if "sounds" in section:
+        kwargs["sounds"] = _bool_setting(section, "sounds", path)
+    return Settings(**kwargs)
+
+
+def _bool_setting(section, key, path):
+    value = section[key]
+    if not isinstance(value, bool):
+        raise ConfigError(
+            f'"{key}" in [settings] of {path.name} must be true or false.'
+        )
+    return value

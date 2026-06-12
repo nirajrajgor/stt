@@ -174,6 +174,28 @@ NSPasteboard = objc.lookUpClass("NSPasteboard")
 SAMPLE_RATE = 16000
 TRANSCRIPTIONS_FILE = os.path.join(SCRIPT_DIR, "transcriptions.md")
 LOG_FILE = os.path.join(SCRIPT_DIR, "stt.log")
+
+# Env vars that moved into [settings] of stt.config.toml and no longer work.
+_RETIRED_ENV_VARS = {"STT_SOUNDS": "sounds"}
+
+
+def _load_settings():
+    for var, key in _RETIRED_ENV_VARS.items():
+        if var in os.environ:
+            print(
+                f"Warning: {var} no longer has any effect. "
+                f'Set "{key}" in {config.CONFIG_PATH.name} instead.',
+                file=sys.stderr,
+            )
+    try:
+        return config.load_settings()
+    except config.ConfigError as exc:
+        print(exc, file=sys.stderr)
+        print("Using default settings.", file=sys.stderr)
+        return config.Settings()
+
+
+_SETTINGS = _load_settings()
 # Spectral-gating noise reduction before transcribe.
 #   STT_DENOISE=auto (default): fire only when the clip's noise floor looks
 #     elevated (music/ambient bleed). Clean rooms keep plosive fidelity.
@@ -194,8 +216,8 @@ MAX_PTT_SECONDS = 360
 # match a whole utterance flanked by pauses.
 UTTERANCE_GAP = float(os.environ.get("STT_UTTERANCE_GAP", "0.7"))
 
-# Audio cue on paste complete. Set STT_SOUNDS=0 to disable.
-SOUNDS_ENABLED = os.environ.get("STT_SOUNDS", "1") != "0"
+# Audio cue on paste complete. Set sounds = false in [settings] to disable.
+SOUNDS_ENABLED = _SETTINGS.sounds
 END_SOUND = "Pop"
 # Parent waits this long for the child process to either open the mic or fail.
 RECORDER_READY_TIMEOUT = float(os.environ.get("STT_RECORDER_READY_TIMEOUT", "3.0"))

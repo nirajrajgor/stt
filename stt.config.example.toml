@@ -19,3 +19,7 @@ toggle = "left_option+left_command"
 #
 # Avoid Option + letter/number combos; macOS may turn them into special characters.
 # Not supported: fn, globe
+
+[settings]
+# Play a sound when transcribed text is pasted. true or false.
+sounds = true

@@ -84,6 +84,39 @@ def test_settings_must_be_a_section(tmp_path):
         config.load_settings(path)
 
 
+@pytest.mark.parametrize("value", [True, False])
+def test_sounds_accepts_booleans(tmp_path, value):
+    path = tmp_path / "stt.config.toml"
+    path.write_text(f"[settings]\nsounds = {str(value).lower()}\n", encoding="utf-8")
+
+    assert config.load_settings(path).sounds is value
+
+
+def test_sounds_defaults_to_true_when_missing(tmp_path):
+    path = tmp_path / "stt.config.toml"
+    path.write_text("[settings]\n", encoding="utf-8")
+
+    assert config.load_settings(path).sounds is True
+
+
+@pytest.mark.parametrize("value", ['"true"', "1"])
+def test_sounds_rejects_non_boolean(tmp_path, value):
+    path = tmp_path / "stt.config.toml"
+    path.write_text(f"[settings]\nsounds = {value}\n", encoding="utf-8")
+
+    with pytest.raises(config.ConfigError, match="must be true or false"):
+        config.load_settings(path)
+
+
+def test_default_config_parses_with_default_settings(tmp_path):
+    path = tmp_path / "stt.config.toml"
+
+    settings = config.load_settings(path)
+
+    assert settings == config.Settings()
+    assert "[settings]" in path.read_text(encoding="utf-8")
+
+
 def test_unknown_settings_key_is_rejected(tmp_path):
     path = tmp_path / "stt.config.toml"
     path.write_text("[settings]\nsoundz = true\n", encoding="utf-8")

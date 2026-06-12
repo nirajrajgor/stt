@@ -79,13 +79,16 @@ Commands apply only within the current recording before paste.
 
 ## Settings
 
-Hotkeys are read from `stt.config.toml`, created on first run. See `stt.config.example.toml` for valid key names. `fn` is not supported.
+Hotkeys and runtime settings are read from `stt.config.toml`, created on first run. See `stt.config.example.toml` for valid key names. `fn` is not supported.
 
-Configure runtime behavior with environment variables:
+In the `[settings]` section (all keys optional):
+
+- `sounds = true|false` — play a sound when transcribed text is pasted; default: `true`. (Replaces the removed `STT_SOUNDS` env var.)
+
+Configure the remaining runtime behavior with environment variables:
 
 - `STT_INPUT_DEVICE=<index|name> ./stt.py` — choose input device by index or name; default: macOS default input.
 - `STT_DENOISE=<auto|0|1> ./stt.py` — `auto` detects noisy clips, `0` disables, `1` forces; default: `auto`.
-- `STT_SOUNDS=<0|1> ./stt.py` — `0` disables paste sound, `1` enables it; default: `1`.
 - `STT_UTTERANCE_GAP=<seconds> ./stt.py` — pause length for voice-command boundaries; default: `0.7`.
 
 List available devices:
