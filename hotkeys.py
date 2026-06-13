@@ -150,7 +150,11 @@ def load_hotkey_bindings(config_path=CONFIG_PATH, create_if_missing=True):
     """
     path = Path(config_path)
     data = load_config_data(path, create_if_missing)
+    return parse_hotkey_bindings(data, path)
 
+
+def parse_hotkey_bindings(data, config_path=CONFIG_PATH):
+    path = Path(config_path)
     hotkey_data = data.get("hotkeys")
     if not isinstance(hotkey_data, dict):
         raise HotkeyConfigError(

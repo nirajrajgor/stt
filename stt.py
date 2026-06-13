@@ -159,7 +159,14 @@ _RETIRED_ENV_VARS = {
 }
 
 
-def _load_settings():
+def _load_config_data():
+    try:
+        return config.load_config_data(), None
+    except config.ConfigError as exc:
+        return {}, exc
+
+
+def _load_settings(config_data, config_error):
     for var, key in _RETIRED_ENV_VARS.items():
         if var in os.environ:
             print(
@@ -168,7 +175,9 @@ def _load_settings():
                 file=sys.stderr,
             )
     try:
-        return config.load_settings()
+        if config_error is not None:
+            raise config_error
+        return config.parse_settings(config_data)
     except config.ConfigError as exc:
         print(exc, file=sys.stderr)
         print("Using default settings.", file=sys.stderr)
@@ -247,16 +256,19 @@ def _setup_logging():
 _log_fh = _setup_logging()
 
 # After the log tee, so config errors and retired-env warnings reach stt.log.
-_SETTINGS = _load_settings()
+_CONFIG_DATA, _CONFIG_ERROR = _load_config_data()
+_SETTINGS = _load_settings(_CONFIG_DATA, _CONFIG_ERROR)
 # Audio cue on paste complete. Set sounds = false in [settings] to disable.
 SOUNDS_ENABLED = _SETTINGS.sounds
 # Owns the model plus the settings-derived utterance_gap and denoise behavior.
 _TRANSCRIBER = Transcriber(_SETTINGS)
 
 
-def _load_hotkey_bindings():
+def _load_hotkey_bindings(config_data, config_error):
     try:
-        return hotkeys.load_hotkey_bindings()
+        if config_error is not None:
+            raise config_error
+        return hotkeys.parse_hotkey_bindings(config_data)
     except config.ConfigError as exc:
         print(exc, file=sys.stderr)
         return None
@@ -702,7 +714,7 @@ def _watch_listener(listener):
 
 def main():
     global HOTKEY_BINDINGS, shutting_down
-    HOTKEY_BINDINGS = _load_hotkey_bindings()
+    HOTKEY_BINDINGS = _load_hotkey_bindings(_CONFIG_DATA, _CONFIG_ERROR)
     if HOTKEY_BINDINGS is None:
         return 2
 
