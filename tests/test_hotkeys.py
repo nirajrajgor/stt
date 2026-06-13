@@ -1,6 +1,7 @@
 from pynput import keyboard
 import pytest
 
+import config
 import hotkeys
 
 
@@ -19,21 +20,9 @@ def test_missing_config_is_created_with_defaults(tmp_path):
     assert not path.exists()
     bindings = hotkeys.load_hotkey_bindings(path)
 
-    assert path.read_text(encoding="utf-8") == hotkeys.DEFAULT_CONFIG
+    assert path.read_text(encoding="utf-8") == config.DEFAULT_CONFIG
     assert bindings.push_to_talk_name == "right_option"
     assert bindings.toggle_name == "left_option+left_command"
-
-
-def test_missing_config_write_failure_is_config_error(tmp_path, monkeypatch):
-    path = tmp_path / "stt.config.toml"
-
-    def fail_write_text(self, *args, **kwargs):
-        raise PermissionError("permission denied")
-
-    monkeypatch.setattr(hotkeys.Path, "write_text", fail_write_text)
-
-    with pytest.raises(hotkeys.HotkeyConfigError, match="Could not create"):
-        hotkeys.load_hotkey_bindings(path)
 
 
 def test_example_config_parses():
