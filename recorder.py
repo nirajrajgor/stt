@@ -8,6 +8,20 @@ third-party imports in stt.py are available.
 # must not parse the config file itself (it runs before the heavy imports).
 RECORDER_DEVICE_ENV = "STT_RECORDER_INPUT_DEVICE"
 
+# Newline-delimited JSON protocol between stt.py and recorder_worker.py.
+EVENT_KEY = "event"
+EVENT_READY = "ready"
+EVENT_WARNING = "warning"
+EVENT_ERROR = "error"
+EVENT_AMPLITUDE = "amplitude"
+EVENT_SAVED = "saved"
+
+COMMAND_STOP = "STOP"
+COMMAND_CANCEL = "CANCEL"
+
+# Capture/transcription rate (Hz); shared here since both sides must match (no resampling).
+SAMPLE_RATE = 16000
+
 
 def child_env(base_env, input_device):
     """Environment for spawning the recorder child.
