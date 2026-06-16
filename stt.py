@@ -273,12 +273,12 @@ def _recorder_log_tail(lines):
 
 
 def _handle_recorder_event(event):
-    kind = event.get("event")
-    if kind == "amplitude":
+    kind = event.get(recorder.EVENT_KEY)
+    if kind == recorder.EVENT_AMPLITUDE:
         overlay.push_amplitude(float(event.get("level", 0.0)))
-    elif kind == "warning":
+    elif kind == recorder.EVENT_WARNING:
         print(f"⚠️  {event.get('message')}")
-    elif kind == "error":
+    elif kind == recorder.EVENT_ERROR:
         print(f"⚠️  Recorder error: {event.get('message')}")
 
 
@@ -345,15 +345,16 @@ def _start_recorder_process():
             lines.append(line)
             continue
 
-        if event.get("event") == "ready":
+        kind = event.get(recorder.EVENT_KEY)
+        if kind == recorder.EVENT_READY:
             threading.Thread(
                 target=_watch_recorder_output, args=(proc,), daemon=True
             ).start()
             return proc, out_path, event.get("device", "default input")
-        if event.get("event") == "warning":
+        if kind == recorder.EVENT_WARNING:
             print(f"⚠️  {event.get('message')}")
             continue
-        if event.get("event") == "error":
+        if kind == recorder.EVENT_ERROR:
             _terminate_recorder(proc)
             _safe_unlink(out_path)
             raise RuntimeError(
@@ -375,7 +376,8 @@ def _request_recorder_stop(proc, cancel=False):
     if proc is None or proc.poll() is not None or proc.stdin is None:
         return
     try:
-        proc.stdin.write("CANCEL\n" if cancel else "STOP\n")
+        command = recorder.COMMAND_CANCEL if cancel else recorder.COMMAND_STOP
+        proc.stdin.write(f"{command}\n")
         proc.stdin.flush()
         proc.stdin.close()
     except (BrokenPipeError, OSError, ValueError):

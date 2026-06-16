@@ -27,7 +27,9 @@ def _emit(event):
 
 def _output_path_from_argv(argv):
     if len(argv) != 2:
-        _emit({"event": "error", "message": "missing output path"})
+        _emit(
+            {recorder.EVENT_KEY: recorder.EVENT_ERROR, "message": "missing output path"}
+        )
         os._exit(2)
     return argv[1]
 
@@ -58,14 +60,16 @@ def main(argv=None):
             while active:
                 with amp_lock:
                     level = latest_amp
-                _emit({"event": "amplitude", "level": level})
+                _emit({recorder.EVENT_KEY: recorder.EVENT_AMPLITUDE, "level": level})
                 time.sleep(1.0 / 30.0)
 
         device, device_warning = recorder.resolve_input_device(
             sd, os.environ.get(recorder.RECORDER_DEVICE_ENV)
         )
         if device_warning:
-            _emit({"event": "warning", "message": device_warning})
+            _emit(
+                {recorder.EVENT_KEY: recorder.EVENT_WARNING, "message": device_warning}
+            )
 
         dev_info = sd.query_devices(device, "input")
         strm = sd.InputStream(
@@ -74,9 +78,9 @@ def main(argv=None):
         strm.start()
         amp_thread = threading.Thread(target=emit_amplitudes, daemon=True)
         amp_thread.start()
-        _emit({"event": "ready", "device": dev_info["name"]})
+        _emit({recorder.EVENT_KEY: recorder.EVENT_READY, "device": dev_info["name"]})
 
-        command = "STOP"
+        command = recorder.COMMAND_STOP
         while True:
             readable, _, _ = select.select([sys.stdin], [], [], 0.1)
             if not readable:
@@ -84,20 +88,22 @@ def main(argv=None):
             line = sys.stdin.readline()
             if line == "":
                 break
-            command = line.strip().upper() or "STOP"
-            if command in {"STOP", "CANCEL"}:
+            command = line.strip().upper() or recorder.COMMAND_STOP
+            if command in {recorder.COMMAND_STOP, recorder.COMMAND_CANCEL}:
                 break
 
         active = False
         amp_thread.join(0.2)
-        if command != "CANCEL":
+        if command != recorder.COMMAND_CANCEL:
             saved_frames = list(frames)
             if saved_frames:
                 audio_data = np.concatenate(saved_frames, axis=0)
             else:
                 audio_data = np.empty((0, 1), dtype=np.float32)
             np.save(out_path, audio_data)
-            _emit({"event": "saved", "frames": len(saved_frames)})
+            _emit(
+                {recorder.EVENT_KEY: recorder.EVENT_SAVED, "frames": len(saved_frames)}
+            )
 
         def cleanup():
             try:
@@ -114,7 +120,7 @@ def main(argv=None):
         cleanup_thread.join(0.5)
         os._exit(0)
     except Exception as exc:
-        _emit({"event": "error", "message": str(exc)})
+        _emit({recorder.EVENT_KEY: recorder.EVENT_ERROR, "message": str(exc)})
         traceback.print_exc()
         os._exit(2)
 
