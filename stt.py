@@ -20,113 +20,6 @@ VENV_PYTHON = os.path.join(SCRIPT_DIR, "venv", "bin", "python")
 if os.path.exists(VENV_PYTHON) and os.path.abspath(sys.executable) != VENV_PYTHON:
     os.execv(VENV_PYTHON, [VENV_PYTHON, os.path.abspath(__file__), *sys.argv[1:]])
 
-import recorder
-
-RECORDER_CHILD_ARG = "--record-child"
-
-
-def _record_child_main():
-    """Own the CoreAudio stream in a disposable process.
-
-    If PortAudio wedges in open/abort/close, the parent can kill this process
-    and release the macOS microphone instead of wedging the hotkey process.
-    """
-    try:
-        out_path = sys.argv[sys.argv.index(RECORDER_CHILD_ARG) + 1]
-    except Exception:
-        print(json.dumps({"event": "error", "message": "missing output path"}), flush=True)
-        os._exit(2)
-
-    try:
-        import numpy as child_np
-        import sounddevice as child_sd
-
-        sample_rate = int(os.environ.get("STT_SAMPLE_RATE", "16000"))
-        frames = []
-        active = True
-        amp_lock = threading.Lock()
-        latest_amp = 0.0
-
-        def callback(indata, frame_count, time_info, status):
-            nonlocal latest_amp
-            if active:
-                frames.append(indata.copy())
-                with amp_lock:
-                    latest_amp = float(child_np.sqrt(child_np.mean(indata ** 2)))
-
-        def emit_amplitudes():
-            while active:
-                with amp_lock:
-                    level = latest_amp
-                print(json.dumps({"event": "amplitude", "level": level}), flush=True)
-                time.sleep(1.0 / 30.0)
-
-        device, device_warning = recorder.resolve_input_device(
-            child_sd, os.environ.get(recorder.RECORDER_DEVICE_ENV)
-        )
-        if device_warning:
-            print(
-                json.dumps({"event": "warning", "message": device_warning}),
-                flush=True,
-            )
-        dev_info = child_sd.query_devices(device, "input")
-        strm = child_sd.InputStream(
-            samplerate=sample_rate, channels=1, callback=callback, device=device
-        )
-        strm.start()
-        amp_thread = threading.Thread(target=emit_amplitudes, daemon=True)
-        amp_thread.start()
-        print(
-            json.dumps({"event": "ready", "device": dev_info["name"]}),
-            flush=True,
-        )
-
-        command = "STOP"
-        while True:
-            readable, _, _ = select.select([sys.stdin], [], [], 0.1)
-            if not readable:
-                continue
-            line = sys.stdin.readline()
-            if line == "":
-                break
-            command = line.strip().upper() or "STOP"
-            if command in {"STOP", "CANCEL"}:
-                break
-
-        active = False
-        amp_thread.join(0.2)
-        if command != "CANCEL":
-            saved_frames = list(frames)
-            if saved_frames:
-                audio_data = child_np.concatenate(saved_frames, axis=0)
-            else:
-                audio_data = child_np.empty((0, 1), dtype=child_np.float32)
-            child_np.save(out_path, audio_data)
-            print(json.dumps({"event": "saved", "frames": len(saved_frames)}), flush=True)
-
-        def cleanup():
-            try:
-                strm.abort()
-            except Exception:
-                traceback.print_exc()
-            try:
-                strm.close()
-            except Exception:
-                traceback.print_exc()
-
-        cleanup_thread = threading.Thread(target=cleanup, daemon=True)
-        cleanup_thread.start()
-        cleanup_thread.join(0.5)
-        os._exit(0)
-    except Exception as exc:
-        print(json.dumps({"event": "error", "message": str(exc)}), flush=True)
-        traceback.print_exc()
-        os._exit(2)
-
-
-if RECORDER_CHILD_ARG in sys.argv:
-    _record_child_main()
-
 import Foundation
 import objc
 from AppKit import NSPasteboardTypeString, NSWorkspace
@@ -136,6 +29,7 @@ from pynput import keyboard
 import config
 import hotkeys
 import overlay
+import recorder
 from transcriber import SAMPLE_RATE, Transcriber
 
 NSUserNotification = objc.lookUpClass("NSUserNotification")
@@ -149,6 +43,7 @@ NSPasteboard = objc.lookUpClass("NSPasteboard")
 
 TRANSCRIPTIONS_FILE = os.path.join(SCRIPT_DIR, "transcriptions.md")
 LOG_FILE = os.path.join(SCRIPT_DIR, "stt.log")
+RECORDER_WORKER = os.path.join(SCRIPT_DIR, "recorder_worker.py")
 
 # Env vars that moved into [settings] of stt.config.toml and no longer work.
 _RETIRED_ENV_VARS = {
@@ -413,7 +308,7 @@ def _start_recorder_process():
     child_env = recorder.child_env(os.environ, _SETTINGS.input_device)
 
     proc = subprocess.Popen(
-        [sys.executable, os.path.abspath(__file__), RECORDER_CHILD_ARG, out_path],
+        [sys.executable, RECORDER_WORKER, out_path],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
