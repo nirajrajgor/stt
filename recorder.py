@@ -19,6 +19,9 @@ EVENT_SAVED = "saved"
 COMMAND_STOP = "STOP"
 COMMAND_CANCEL = "CANCEL"
 
+# Capture/transcription rate (Hz); shared here since both sides must match (no resampling).
+SAMPLE_RATE = 16000
+
 
 def child_env(base_env, input_device):
     """Environment for spawning the recorder child.

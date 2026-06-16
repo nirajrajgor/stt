@@ -11,11 +11,11 @@ import numpy as np
 from parakeet_mlx import DecodingConfig, SentenceConfig, from_pretrained
 from parakeet_mlx.audio import get_logmel
 
+from recorder import SAMPLE_RATE
 from text_cleanup import apply_corrections
 from voice_commands import apply_voice_commands
 
 PARAKEET_REPO = "mlx-community/parakeet-tdt-0.6b-v2"
-SAMPLE_RATE = 16000
 # RMS of the quietest 10% of 20 ms frames. Tuned against a MacBook Air built-in
 # mic — clean speech sits around 0.003–0.008; music bleed pushes it above ~0.02.
 NOISE_FLOOR_THRESHOLD = 0.015

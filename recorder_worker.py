@@ -43,7 +43,7 @@ def main(argv=None):
         import numpy as np
         import sounddevice as sd
 
-        sample_rate = int(os.environ.get("STT_SAMPLE_RATE", "16000"))
+        sample_rate = recorder.SAMPLE_RATE
         frames = []
         active = True
         amp_lock = threading.Lock()
