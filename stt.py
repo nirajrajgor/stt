@@ -81,10 +81,10 @@ def _load_settings(config_data, config_error):
 
 # Ignore hold durations shorter than this — almost always an accidental tap.
 MIN_HOLD_SECONDS = 0.25
-# Safety cap for push-to-talk: if macOS drops the key-release event (screen
-# lock, fullscreen VM, focus change), this prevents an unbounded recording.
-MAX_PTT_SECONDS = 360
-PTT_WARNING_SECONDS = MAX_PTT_SECONDS - 60
+# Hard cap on any recording's duration. For push-to-talk it's a safety net if
+# macOS drops the key-release event; for toggle it stops a forgotten recording.
+MAX_RECORDING_SECONDS = 600
+RECORDING_WARNING_SECONDS = MAX_RECORDING_SECONDS - 60
 
 END_SOUND = "Pop"
 # Parent waits this long for the child process to either open the mic or fail.
@@ -100,8 +100,8 @@ lock = threading.Lock()
 pressed_keys = set()
 ptt_held = False
 toggle_state = hotkeys.ToggleChordState()
-ptt_warning_timer = None
-ptt_auto_stop_timer = None
+warning_timer = None
+auto_stop_timer = None
 shutting_down = False
 
 # Single-consumer queue so a slow transcription can't block the hotkey lock
@@ -421,6 +421,7 @@ def _collect_recorder_audio(proc, out_path):
 
 def start_recording(mode):
     global recording, recording_mode, recorder_proc, recorder_output_path
+    global warning_timer, auto_stop_timer
 
     try:
         proc, out_path, device_name = _start_recorder_process()
@@ -436,12 +437,18 @@ def start_recording(mode):
     overlay.show()
     print(f"🎙️  Using input device: {device_name}")
     print("🎙️  Recording...")
+    warning_timer = threading.Timer(RECORDING_WARNING_SECONDS, _recording_timeout_warning)
+    warning_timer.daemon = True
+    warning_timer.start()
+    auto_stop_timer = threading.Timer(MAX_RECORDING_SECONDS, _recording_auto_stop)
+    auto_stop_timer.daemon = True
+    auto_stop_timer.start()
 
 
 def stop_recording(expected_mode=None, discard=False):
     """Detach the child recorder and hand it to the worker; call with `lock` held."""
     global recording, recording_mode, recorder_proc, recorder_output_path
-    global ptt_warning_timer, ptt_auto_stop_timer
+    global warning_timer, auto_stop_timer
 
     if not recording:
         return False
@@ -451,12 +458,12 @@ def stop_recording(expected_mode=None, discard=False):
     recording = False
     recording_mode = None
     overlay.hide()
-    if ptt_warning_timer:
-        ptt_warning_timer.cancel()
-        ptt_warning_timer = None
-    if ptt_auto_stop_timer:
-        ptt_auto_stop_timer.cancel()
-        ptt_auto_stop_timer = None
+    if warning_timer:
+        warning_timer.cancel()
+        warning_timer = None
+    if auto_stop_timer:
+        auto_stop_timer.cancel()
+        auto_stop_timer = None
 
     proc = recorder_proc
     out_path = recorder_output_path
@@ -553,18 +560,9 @@ def _hotkey_worker():
 
 
 def on_ptt_press():
-    global ptt_warning_timer, ptt_auto_stop_timer
     with lock:
         if not recording:
             start_recording("ptt")
-            ptt_warning_timer = threading.Timer(
-                PTT_WARNING_SECONDS, _ptt_timeout_warning
-            )
-            ptt_warning_timer.daemon = True
-            ptt_warning_timer.start()
-            ptt_auto_stop_timer = threading.Timer(MAX_PTT_SECONDS, _ptt_auto_stop)
-            ptt_auto_stop_timer.daemon = True
-            ptt_auto_stop_timer.start()
 
 
 def on_ptt_release():
@@ -573,26 +571,28 @@ def on_ptt_release():
             stop_recording("ptt")
 
 
-def _ptt_timeout_warning():
-    """Warn before the push-to-talk fail-safe stops recording."""
+def _recording_timeout_warning():
+    """Warn before the fail-safe stops the recording."""
     with lock:
-        if recording and recording_mode == "ptt":
-            remaining = MAX_PTT_SECONDS - PTT_WARNING_SECONDS
-            message = f"Push-to-talk will stop automatically in {remaining} seconds."
+        if recording:
+            remaining = MAX_RECORDING_SECONDS - RECORDING_WARNING_SECONDS
+            message = f"Recording will stop automatically in {remaining} seconds."
             print(f"⚠️  {message}")
             notify("STT", message)
 
 
-def _ptt_auto_stop():
-    """Fail-safe if macOS drops the right-Option release event."""
+def _recording_auto_stop():
+    """Fail-safe cap on recording length."""
     global ptt_held
     with lock:
-        if recording and recording_mode == "ptt":
-            print(f"⏱  PTT auto-stopped after {MAX_PTT_SECONDS}s (stuck hotkey?).")
-            # Clear the held flag so the user's eventual (late) release is a
-            # no-op and the next press re-arms cleanly.
-            ptt_held = False
-            stop_recording("ptt")
+        if recording:
+            mode = recording_mode
+            print(f"⏱  Recording auto-stopped after {MAX_RECORDING_SECONDS}s.")
+            if mode == "ptt":
+                # Clear the held flag so the user's eventual (late) release is a
+                # no-op and the next press re-arms cleanly.
+                ptt_held = False
+            stop_recording(mode)
 
 
 def on_press(key):
