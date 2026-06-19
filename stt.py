@@ -557,12 +557,11 @@ def on_ptt_press():
     with lock:
         if not recording:
             start_recording("ptt")
-            if PTT_WARNING_SECONDS > 0:
-                ptt_warning_timer = threading.Timer(
-                    PTT_WARNING_SECONDS, _ptt_timeout_warning
-                )
-                ptt_warning_timer.daemon = True
-                ptt_warning_timer.start()
+            ptt_warning_timer = threading.Timer(
+                PTT_WARNING_SECONDS, _ptt_timeout_warning
+            )
+            ptt_warning_timer.daemon = True
+            ptt_warning_timer.start()
             ptt_auto_stop_timer = threading.Timer(MAX_PTT_SECONDS, _ptt_auto_stop)
             ptt_auto_stop_timer.daemon = True
             ptt_auto_stop_timer.start()
